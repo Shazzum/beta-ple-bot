@@ -23,7 +23,6 @@ def webhook():
 
     data = request.json
 
-    # ✅ Safe text handling
     text = (data.get("text") or "").lower()
     name = data.get("name")
     user_id = data.get("user_id")
@@ -61,25 +60,71 @@ def webhook():
         if len(assignments) > 5:
             assignments.pop(0)
 
-        # 🔥 Personalized links
-        links = []
-        for uid, uname in users.items():
-            link = f"{BASE_URL}/claim/{assignment_id}/{uid}"
-            links.append(f"{uname}: {link}")
+        # 🔥 ONE universal link
+        link = f"{BASE_URL}/claim/{assignment_id}"
 
         send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap your name to claim:\n\n" +
-            "\n".join(links)
+            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{link}"
         )
 
     return "OK"
 
 
-@app.route("/claim/<assignment_id>/<user_id>")
-def claim(assignment_id, user_id):
-    global assignments, leaderboard, users
+# 🔥 Claim page (choose your name)
+@app.route("/claim/<assignment_id>")
+def claim_page(assignment_id):
+    global users
 
-    print("CLAIM HIT:", assignment_id, user_id)  # 🔥 debug
+    buttons = ""
+
+    for uid, uname in users.items():
+        buttons += f"""
+        <form action="/submit/{assignment_id}/{uid}" method="post">
+            <button>{uname}</button>
+        </form>
+        """
+
+    return f"""
+    <html>
+    <head>
+        <title>Claim Duty</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                background: #0f172a;
+                color: white;
+                text-align: center;
+                padding: 20px;
+            }}
+            h1 {{
+                margin-bottom: 20px;
+            }}
+            button {{
+                width: 90%;
+                margin: 10px;
+                padding: 15px;
+                font-size: 18px;
+                border-radius: 12px;
+                border: none;
+                background: #22c55e;
+                color: white;
+                cursor: pointer;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Select your name</h1>
+        {buttons}
+    </body>
+    </html>
+    """
+
+
+# 🔥 Handle claim
+@app.route("/submit/<assignment_id>/<user_id>", methods=["POST"])
+def submit_claim(assignment_id, user_id):
+    global assignments, leaderboard, users
 
     for a in assignments:
         if a["id"] == assignment_id:
@@ -90,7 +135,7 @@ def claim(assignment_id, user_id):
             claimer = users.get(user_id, "Someone")
             a["claimed_by"] = claimer
 
-            # ✅ Track by user_id (important)
+            # Track by user_id (correct way)
             leaderboard[user_id] = leaderboard.get(user_id, 0) + 1
 
             send_message(
@@ -102,12 +147,12 @@ def claim(assignment_id, user_id):
     return html_page("This assignment expired ❌")
 
 
-# 🎨 Clean UI
+# 🎨 Clean confirmation UI
 def html_page(message):
     return f"""
     <html>
     <head>
-        <title>Pledge Duty</title>
+        <title>Success</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{
@@ -126,9 +171,6 @@ def html_page(message):
                 border-radius: 20px;
                 text-align: center;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            }}
-            h1 {{
-                margin: 0;
             }}
         </style>
     </head>
