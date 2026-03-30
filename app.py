@@ -25,9 +25,9 @@ PLEDGES = {
     "crum": "pledge crum",
     "bell": "pledge bell",
     "correll": "pledge correll",
-    "smith": "pledge smith"
-    "ellis": "pledge ellis"
-    "vance": "pledge vance"
+    "smith": "pledge smith",
+    "ellis": "pledge ellis",
+    "vance": "pledge vance",
     "nelson": "pledge nelson"
 }
 
