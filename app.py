@@ -44,7 +44,7 @@ def webhook():
         return "OK"
 
     # Baker trigger
-    if "pledge" in text:
+    if "pledgeduty" in text:
         assignment_id = str(uuid.uuid4())
 
         assignments.append({
@@ -63,7 +63,7 @@ def webhook():
             links.append(f"{uname}: {link}")
 
         send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap your name to claim:\n\n" +
+            f"🍞 {name} posted a pleh duty\n\nTap your name to claim:\n\n" +
             "\n".join(links)
         )
 
@@ -72,72 +72,53 @@ def webhook():
 
 @app.route("/claim/<assignment_id>/<user_id>")
 def claim(assignment_id, user_id):
-    global assignments, leaderboard
+    global assignments, leaderboard, users
 
     for a in assignments:
         if a["id"] == assignment_id:
 
             if a["claimed_by"] is not None:
-                return styled_page("Already claimed ❌")
+                return """
+                <h1 style='text-align:center;margin-top:50px;'>Already claimed ❌</h1>
+                """
 
             claimer = users.get(user_id, "Someone")
             a["claimed_by"] = claimer
 
-            # 🔥 Update leaderboard
             leaderboard[claimer] = leaderboard.get(claimer, 0) + 1
 
             send_message(
-                f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
+                f"🔥 {claimer} has claimed {a['owner']}'s pleh duty"
             )
 
-            return styled_page(f"{claimer}, you got it 👍")
+            return f"""
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body {{
+                        font-family: -apple-system;
+                        text-align: center;
+                        margin-top: 100px;
+                        background: #0f172a;
+                        color: white;
+                    }}
+                    .box {{
+                        background: #1e293b;
+                        padding: 30px;
+                        border-radius: 15px;
+                        display: inline-block;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="box">
+                    <h1>{claimer}, you got it 👍</h1>
+                </div>
+            </body>
+            </html>
+            """
 
-    return styled_page("This assignment expired ❌")
-
-
-# 🎨 PROFESSIONAL UI
-def styled_page(message):
-    return f"""
-    <html>
-    <head>
-        <title>Pledge Claim</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                background: #0f172a;
-                color: white;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-                margin: 0;
-            }}
-            .card {{
-                background: #1e293b;
-                padding: 30px;
-                border-radius: 20px;
-                text-align: center;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            }}
-            h1 {{
-                margin-bottom: 20px;
-            }}
-            button {{
-                background: #22c55e;
-                border: none;
-                padding: 15px 25px;
-                font-size: 18px;
-                border-radius: 10px;
-                color: white;
-                cursor: pointer;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h1>{message}</h1>
-        </div>
-    </body>
-    </html>
+    return """
+    <h1 style='text-align:center;margin-top:50px;'>This assignment expired ❌</h1>
     """
