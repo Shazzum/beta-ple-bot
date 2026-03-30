@@ -7,8 +7,31 @@ app = Flask(__name__)
 BOT_ID = "68219e78f1b2110053f1b4e4ed"
 BASE_URL = "https://beta-ple-bot.onrender.com"  # 🔥 CHANGE THIS
 
+# ✅ Fixed pledge list
+PLEDGES = {
+    "simms": "pledge simms",
+    "lane": "pledge lane",
+    "allen": "pledge allen",
+    "denton": "pledge denton",
+    "anderson": "pledge anderson",
+    "gillum": "pledge gillum",
+    "davis": "pledge davis",
+    "woodard": "pledge woodard",
+    "ballard": "pledge ballard",
+    "earls": "pledge earls",
+    "woolbright": "pledge woolbright",
+    "reddin": "pledge reddin",
+    "sommers": "pledge sommers",
+    "crum": "pledge crum",
+    "bell": "pledge bell",
+    "correll": "pledge correll",
+    "smith": "pledge smith"
+    "ellis": "pledge ellis"
+    "vance": "pledge vance"
+    "nelson": "pledge nelson"
+}
+
 assignments = []
-users = {}
 leaderboard = {}
 
 
@@ -19,16 +42,12 @@ def send_message(text):
 
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments, users, leaderboard
+    global assignments, leaderboard
 
     data = request.json
 
     text = (data.get("text") or "").lower()
     name = data.get("name")
-    user_id = data.get("user_id")
-
-    # Track users (alias)
-    users[user_id] = name
 
     # 🏆 Leaderboard command
     if "!leaderboard" in text:
@@ -39,8 +58,8 @@ def webhook():
         sorted_lb = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
 
         msg = "🏆 Leaderboard:\n\n"
-        for i, (uid, score) in enumerate(sorted_lb, 1):
-            display_name = users.get(uid, "Unknown")
+        for i, (pid, score) in enumerate(sorted_lb, 1):
+            display_name = PLEDGES.get(pid, "Unknown")
             msg += f"{i}. {display_name} — {score}\n"
 
         send_message(msg)
@@ -60,7 +79,6 @@ def webhook():
         if len(assignments) > 5:
             assignments.pop(0)
 
-        # 🔥 ONE universal link
         link = f"{BASE_URL}/claim/{assignment_id}"
 
         send_message(
@@ -70,17 +88,16 @@ def webhook():
     return "OK"
 
 
-# 🔥 Claim page (choose your name)
+# 🔥 Claim page (buttons for pledges only)
 @app.route("/claim/<assignment_id>")
 def claim_page(assignment_id):
-    global users
 
     buttons = ""
 
-    for uid, uname in users.items():
+    for pid, pname in PLEDGES.items():
         buttons += f"""
-        <form action="/submit/{assignment_id}/{uid}" method="post">
-            <button>{uname}</button>
+        <form action="/submit/{assignment_id}/{pid}" method="post">
+            <button>{pname}</button>
         </form>
         """
 
@@ -122,9 +139,9 @@ def claim_page(assignment_id):
 
 
 # 🔥 Handle claim
-@app.route("/submit/<assignment_id>/<user_id>", methods=["POST"])
-def submit_claim(assignment_id, user_id):
-    global assignments, leaderboard, users
+@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
+def submit_claim(assignment_id, pid):
+    global assignments, leaderboard
 
     for a in assignments:
         if a["id"] == assignment_id:
@@ -132,11 +149,10 @@ def submit_claim(assignment_id, user_id):
             if a["claimed_by"] is not None:
                 return html_page("Already claimed ❌")
 
-            claimer = users.get(user_id, "Someone")
+            claimer = PLEDGES.get(pid, "Someone")
             a["claimed_by"] = claimer
 
-            # Track by user_id (correct way)
-            leaderboard[user_id] = leaderboard.get(user_id, 0) + 1
+            leaderboard[pid] = leaderboard.get(pid, 0) + 1
 
             send_message(
                 f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
@@ -147,7 +163,7 @@ def submit_claim(assignment_id, user_id):
     return html_page("This assignment expired ❌")
 
 
-# 🎨 Clean confirmation UI
+# 🎨 Confirmation page
 def html_page(message):
     return f"""
     <html>
