@@ -5,10 +5,11 @@ import uuid
 app = Flask(__name__)
 
 BOT_ID = "68219e78f1b2110053f1b4e4ed"
+BASE_URL = "https://beta-ple-bot.onrender.com"  # 🔥 CHANGE THIS
 
 assignments = []
 users = {}
-leaderboard = {}  # 🔥 new
+leaderboard = {}
 
 
 def send_message(text):
@@ -21,14 +22,16 @@ def webhook():
     global assignments, users, leaderboard
 
     data = request.json
-    text = data.get("text", "").lower()
+
+    # ✅ Safe text handling
+    text = (data.get("text") or "").lower()
     name = data.get("name")
     user_id = data.get("user_id")
 
-    # Track users
+    # Track users (alias)
     users[user_id] = name
 
-    # 🔥 Leaderboard command
+    # 🏆 Leaderboard command
     if "!leaderboard" in text:
         if not leaderboard:
             send_message("No claims yet")
@@ -37,13 +40,14 @@ def webhook():
         sorted_lb = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
 
         msg = "🏆 Leaderboard:\n\n"
-        for i, (user, score) in enumerate(sorted_lb, 1):
-            msg += f"{i}. {user} — {score}\n"
+        for i, (uid, score) in enumerate(sorted_lb, 1):
+            display_name = users.get(uid, "Unknown")
+            msg += f"{i}. {display_name} — {score}\n"
 
         send_message(msg)
         return "OK"
 
-    # Baker trigger
+    # 🍞 Trigger
     if "pledgeduty" in text:
         assignment_id = str(uuid.uuid4())
 
@@ -53,17 +57,18 @@ def webhook():
             "claimed_by": None
         })
 
+        # Keep only last 5
         if len(assignments) > 5:
             assignments.pop(0)
 
-        # Personalized links
+        # 🔥 Personalized links
         links = []
         for uid, uname in users.items():
-            link = f"https://your-app.onrender.com/claim/{assignment_id}/{uid}"
+            link = f"{BASE_URL}/claim/{assignment_id}/{uid}"
             links.append(f"{uname}: {link}")
 
         send_message(
-            f"🍞 {name} posted a pleh duty\n\nTap your name to claim:\n\n" +
+            f"🍞 {name} posted a pledge duty\n\nTap your name to claim:\n\n" +
             "\n".join(links)
         )
 
@@ -74,51 +79,63 @@ def webhook():
 def claim(assignment_id, user_id):
     global assignments, leaderboard, users
 
+    print("CLAIM HIT:", assignment_id, user_id)  # 🔥 debug
+
     for a in assignments:
         if a["id"] == assignment_id:
 
             if a["claimed_by"] is not None:
-                return """
-                <h1 style='text-align:center;margin-top:50px;'>Already claimed ❌</h1>
-                """
+                return html_page("Already claimed ❌")
 
             claimer = users.get(user_id, "Someone")
             a["claimed_by"] = claimer
 
-            leaderboard[claimer] = leaderboard.get(claimer, 0) + 1
+            # ✅ Track by user_id (important)
+            leaderboard[user_id] = leaderboard.get(user_id, 0) + 1
 
             send_message(
-                f"🔥 {claimer} has claimed {a['owner']}'s pleh duty"
+                f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
             )
 
-            return f"""
-            <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    body {{
-                        font-family: -apple-system;
-                        text-align: center;
-                        margin-top: 100px;
-                        background: #0f172a;
-                        color: white;
-                    }}
-                    .box {{
-                        background: #1e293b;
-                        padding: 30px;
-                        border-radius: 15px;
-                        display: inline-block;
-                    }}
-                </style>
-            </head>
-            <body>
-                <div class="box">
-                    <h1>{claimer}, you got it 👍</h1>
-                </div>
-            </body>
-            </html>
-            """
+            return html_page(f"{claimer}, you got it 👍")
 
-    return """
-    <h1 style='text-align:center;margin-top:50px;'>This assignment expired ❌</h1>
+    return html_page("This assignment expired ❌")
+
+
+# 🎨 Clean UI
+def html_page(message):
+    return f"""
+    <html>
+    <head>
+        <title>Pledge Duty</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                background: #0f172a;
+                color: white;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+            }}
+            .card {{
+                background: #1e293b;
+                padding: 30px;
+                border-radius: 20px;
+                text-align: center;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            }}
+            h1 {{
+                margin: 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h1>{message}</h1>
+        </div>
+    </body>
+    </html>
     """
