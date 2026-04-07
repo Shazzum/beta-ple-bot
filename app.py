@@ -10,13 +10,11 @@ app = Flask(__name__)
 BOT_ID = "68219e78f1b2110053f1b4e4ed"
 BASE_URL = "https://beta-ple-bot.onrender.com"
 
-# 📍 Arkadelphia coords
 LAT = 34.1209
 LON = -93.0538
 
 DATA_FILE = "data.json"
 
-# ✅ PLEDGES
 PLEDGES = {
     "simms": "pledge simms",
     "lane": "pledge lane",
@@ -71,7 +69,7 @@ def send_message(text):
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
 
 
-# 🌤 WEATHER FUNCTION (Fahrenheit)
+# 🌤 WEATHER
 def get_weather():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
@@ -99,7 +97,7 @@ def get_weather():
     )
 
 
-# ⏰ DAILY WEATHER (8AM CENTRAL)
+# ⏰ DAILY WEATHER
 def scheduled_weather():
     send_message(get_weather())
 
@@ -117,18 +115,48 @@ def webhook():
     text = (data.get("text") or "").lower()
     name = data.get("name")
 
-    # 🌤 WEATHER COMMAND
+    # 🌤 WEATHER
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    # 📊 PLEDGE DUTY + ASSIGNMENT (FIXED)
+    # 🔥 ADMIN COMMAND (!give)
+    if text.startswith("!give"):
+        if name != "Mega":
+            send_message("Unauthorized ❌")
+            return "OK"
+
+        parts = text.split()
+
+        if len(parts) != 3:
+            send_message("Usage: !give [pledge] [amount]")
+            return "OK"
+
+        pid = parts[1]
+        try:
+            amount = int(parts[2])
+        except:
+            send_message("Amount must be a number")
+            return "OK"
+
+        if pid not in PLEDGES:
+            send_message("Invalid pledge name")
+            return "OK"
+
+        leaderboard[pid] = leaderboard.get(pid, 0) + amount
+        save_data()
+
+        send_message(
+            f"⚡ {PLEDGES[pid]} received {amount} duties\n"
+            f"New total: {leaderboard[pid]}"
+        )
+        return "OK"
+
+    # 📊 PLEDGEDUTY
     if text.strip() == "pledgeduty":
-        # Track count
         pledge_counts[name] = pledge_counts.get(name, 0) + 1
         save_data()
 
-        # Create assignment
         assignment_id = str(uuid.uuid4())
 
         assignments.append({
@@ -150,7 +178,7 @@ def webhook():
 
         return "OK"
 
-    # 🏆 PLEDGE DUTY LEADERBOARD
+    # 🏆 PLEDGEDUTY LEADERBOARD
     if "pleaderboard" in text:
         if not pledge_counts:
             send_message("No duty counts yet")
@@ -184,10 +212,8 @@ def webhook():
     return "OK"
 
 
-# 🔘 CLAIM PAGE
 @app.route("/claim/<assignment_id>")
 def claim_page(assignment_id):
-
     buttons = ""
 
     for pid, pname in PLEDGES.items():
@@ -207,7 +233,6 @@ def claim_page(assignment_id):
     """
 
 
-# ✅ HANDLE CLAIM
 @app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
 def submit_claim(assignment_id, pid):
     global assignments, leaderboard
