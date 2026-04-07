@@ -1,6 +1,8 @@
 from flask import Flask, request
 import requests
 import uuid
+import json
+import os
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 
@@ -10,8 +12,37 @@ BOT_ID = "68219e78f1b2110053f1b4e4ed"
 
 assignments = []
 users = {}
-leaderboard = {}
-pledge_counts = {}  # 🔥 new tracker
+
+# 🔥 PERSISTENT STORAGE FILE
+DATA_FILE = "data.json"
+
+
+# 🔄 LOAD DATA
+def load_data():
+    global leaderboard, pledge_counts
+
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+            leaderboard = data.get("leaderboard", {})
+            pledge_counts = data.get("pledge_counts", {})
+    else:
+        leaderboard = {}
+        pledge_counts = {}
+
+
+# 💾 SAVE DATA
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump({
+            "leaderboard": leaderboard,
+            "pledge_counts": pledge_counts
+        }, f)
+
+
+# Load on startup
+load_data()
+
 
 # Arkadelphia coordinates
 LAT = 34.1209
@@ -23,7 +54,7 @@ def send_message(text):
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
 
 
-# 🌤 WEATHER FUNCTION (FIXED TO FAHRENHEIT)
+# 🌤 WEATHER FUNCTION
 def get_weather():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
@@ -51,7 +82,7 @@ def get_weather():
     )
 
 
-# ⏰ DAILY 8AM WEATHER
+# ⏰ DAILY WEATHER
 def scheduled_weather():
     send_message(get_weather())
 
@@ -80,6 +111,7 @@ def webhook():
     # 📊 PLEDGE DUTY TRACKER
     if "pledgeduty" in text:
         pledge_counts[name] = pledge_counts.get(name, 0) + 1
+        save_data()  # 🔥 save immediately
         send_message(f"📈 {name} has done pledgeduty {pledge_counts[name]} times")
         return "OK"
 
@@ -98,7 +130,7 @@ def webhook():
         send_message(msg)
         return "OK"
 
-    # 🏆 ORIGINAL LEADERBOARD
+    # 🏆 CLAIM LEADERBOARD
     if "!leaderboard" in text:
         if not leaderboard:
             send_message("No claims yet")
@@ -153,6 +185,7 @@ def claim(assignment_id, user_id):
             a["claimed_by"] = claimer
 
             leaderboard[claimer] = leaderboard.get(claimer, 0) + 1
+            save_data()  # 🔥 save immediately
 
             send_message(
                 f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
