@@ -4,18 +4,43 @@ import uuid
 import json
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
-import pytz
 
 app = Flask(__name__)
 
 BOT_ID = "68219e78f1b2110053f1b4e4ed"
+BASE_URL = "https://beta-ple-bot.onrender.com"
 
-assignments = []
-users = {}
+# 📍 Arkadelphia coords
+LAT = 34.1209
+LON = -93.0538
 
-# 🔥 PERSISTENT STORAGE FILE
 DATA_FILE = "data.json"
 
+# ✅ PLEDGES
+PLEDGES = {
+    "simms": "pledge simms",
+    "lane": "pledge lane",
+    "allen": "pledge allen",
+    "denton": "pledge denton",
+    "anderson": "pledge anderson",
+    "gillum": "pledge gillum",
+    "collier": "pledge collier",
+    "woodard": "pledge woodard",
+    "ballard": "pledge ballard",
+    "earls": "pledge earls",
+    "woolbright": "pledge woolbright",
+    "reddin": "pledge reddin",
+    "sommers": "pledge sommers",
+    "crum": "pledge crum",
+    "bell": "pledge bell",
+    "correll": "pledge correll",
+    "smith": "pledge smith",
+    "ellis": "pledge ellis",
+    "vance": "pledge vance",
+    "nelson": "pledge nelson"
+}
+
+assignments = []
 
 # 🔄 LOAD DATA
 def load_data():
@@ -30,7 +55,6 @@ def load_data():
         leaderboard = {}
         pledge_counts = {}
 
-
 # 💾 SAVE DATA
 def save_data():
     with open(DATA_FILE, "w") as f:
@@ -39,14 +63,7 @@ def save_data():
             "pledge_counts": pledge_counts
         }, f)
 
-
-# Load on startup
 load_data()
-
-
-# Arkadelphia coordinates
-LAT = 34.1209
-LON = -93.0538
 
 
 def send_message(text):
@@ -54,7 +71,7 @@ def send_message(text):
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
 
 
-# 🌤 WEATHER FUNCTION
+# 🌤 WEATHER FUNCTION (fixed Fahrenheit)
 def get_weather():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
@@ -82,7 +99,7 @@ def get_weather():
     )
 
 
-# ⏰ DAILY WEATHER
+# ⏰ DAILY WEATHER (8AM CENTRAL)
 def scheduled_weather():
     send_message(get_weather())
 
@@ -94,14 +111,11 @@ scheduler.start()
 
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments, users, leaderboard, pledge_counts
+    global assignments, leaderboard, pledge_counts
 
     data = request.json
-    text = data.get("text", "").lower()
+    text = (data.get("text") or "").lower()
     name = data.get("name")
-    user_id = data.get("user_id")
-
-    users[user_id] = name
 
     # 🌤 WEATHER COMMAND
     if "!weather" in text:
@@ -111,14 +125,14 @@ def webhook():
     # 📊 PLEDGE DUTY TRACKER
     if "pledgeduty" in text:
         pledge_counts[name] = pledge_counts.get(name, 0) + 1
-        save_data()  # 🔥 save immediately
-        send_message(f"📈 {name} has done pledgeduty {pledge_counts[name]} times")
+        save_data()
+        send_message(f"📈 {name} has posted {pledge_counts[name]} duties")
         return "OK"
 
     # 🏆 PLEDGE DUTY LEADERBOARD
     if "pleaderboard" in text:
         if not pledge_counts:
-            send_message("No pledgeduty counts yet")
+            send_message("No duty counts yet")
             return "OK"
 
         sorted_lb = sorted(pledge_counts.items(), key=lambda x: x[1], reverse=True)
@@ -139,14 +153,15 @@ def webhook():
         sorted_lb = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
 
         msg = "🏆 Leaderboard:\n\n"
-        for i, (user, score) in enumerate(sorted_lb, 1):
-            msg += f"{i}. {user} — {score}\n"
+        for i, (pid, score) in enumerate(sorted_lb, 1):
+            display_name = PLEDGES.get(pid, "Unknown")
+            msg += f"{i}. {display_name} — {score}\n"
 
         send_message(msg)
         return "OK"
 
-    # 🍞 PLEDGE SYSTEM
-    if "pledge" in text:
+    # 🍞 TRIGGER DUTY
+    if "pledgeduty" in text:
         assignment_id = str(uuid.uuid4())
 
         assignments.append({
@@ -158,77 +173,69 @@ def webhook():
         if len(assignments) > 5:
             assignments.pop(0)
 
-        links = []
-        for uid, uname in users.items():
-            link = f"https://your-app.onrender.com/claim/{assignment_id}/{uid}"
-            links.append(f"{uname}: {link}")
+        link = f"{BASE_URL}/claim/{assignment_id}"
 
         send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap your name to claim:\n\n" +
-            "\n".join(links)
+            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{link}"
         )
 
     return "OK"
 
 
-@app.route("/claim/<assignment_id>/<user_id>")
-def claim(assignment_id, user_id):
+# 🔘 CLAIM PAGE
+@app.route("/claim/<assignment_id>")
+def claim_page(assignment_id):
+
+    buttons = ""
+
+    for pid, pname in PLEDGES.items():
+        buttons += f"""
+        <form action="/submit/{assignment_id}/{pid}" method="post">
+            <button>{pname}</button>
+        </form>
+        """
+
+    return f"""
+    <html>
+    <body style="background:#0f172a;color:white;text-align:center;">
+        <h1>Select your name</h1>
+        {buttons}
+    </body>
+    </html>
+    """
+
+
+# ✅ HANDLE CLAIM
+@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
+def submit_claim(assignment_id, pid):
     global assignments, leaderboard
 
     for a in assignments:
         if a["id"] == assignment_id:
 
             if a["claimed_by"] is not None:
-                return styled_page("Already claimed ❌")
+                return html_page("Already claimed ❌")
 
-            claimer = users.get(user_id, "Someone")
+            claimer = PLEDGES.get(pid, "Someone")
             a["claimed_by"] = claimer
 
-            leaderboard[claimer] = leaderboard.get(claimer, 0) + 1
-            save_data()  # 🔥 save immediately
+            leaderboard[pid] = leaderboard.get(pid, 0) + 1
+            save_data()
 
             send_message(
                 f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
             )
 
-            return styled_page(f"{claimer}, you got it 👍")
+            return html_page(f"{claimer}, you got it 👍")
 
-    return styled_page("This assignment expired ❌")
+    return html_page("This assignment expired ❌")
 
 
-def styled_page(message):
+def html_page(message):
     return f"""
     <html>
-    <head>
-        <title>Pledge Claim</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                background: #0f172a;
-                color: white;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-                margin: 0;
-            }}
-            .card {{
-                background: #1e293b;
-                padding: 30px;
-                border-radius: 20px;
-                text-align: center;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            }}
-            h1 {{
-                margin-bottom: 20px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h1>{message}</h1>
-        </div>
+    <body style="background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;">
+        <h1>{message}</h1>
     </body>
     </html>
     """
