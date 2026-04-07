@@ -2,7 +2,6 @@ from flask import Flask, request
 import requests
 import uuid
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
 import pytz
 
 app = Flask(__name__)
@@ -12,6 +11,7 @@ BOT_ID = "68219e78f1b2110053f1b4e4ed"
 assignments = []
 users = {}
 leaderboard = {}
+pledge_counts = {}  # 🔥 new tracker
 
 # Arkadelphia coordinates
 LAT = 34.1209
@@ -23,12 +23,13 @@ def send_message(text):
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
 
 
-# 🌤 WEATHER FUNCTION
+# 🌤 WEATHER FUNCTION (FIXED TO FAHRENHEIT)
 def get_weather():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={LAT}&longitude={LON}"
         f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+        f"&temperature_unit=fahrenheit"
         f"&timezone=America/Chicago"
     )
 
@@ -38,8 +39,8 @@ def get_weather():
     if not daily:
         return "Weather unavailable ❌"
 
-    max_temp = daily["temperature_2m_max"][0]
-    min_temp = daily["temperature_2m_min"][0]
+    max_temp = round(daily["temperature_2m_max"][0])
+    min_temp = round(daily["temperature_2m_min"][0])
     rain = daily["precipitation_probability_max"][0]
 
     return (
@@ -50,13 +51,11 @@ def get_weather():
     )
 
 
-# ⏰ DAILY 8AM JOB
+# ⏰ DAILY 8AM WEATHER
 def scheduled_weather():
-    print("Sending scheduled weather...")
     send_message(get_weather())
 
 
-# Start scheduler
 scheduler = BackgroundScheduler(timezone="America/Chicago")
 scheduler.add_job(scheduled_weather, "cron", hour=8, minute=0)
 scheduler.start()
@@ -64,7 +63,7 @@ scheduler.start()
 
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments, users, leaderboard
+    global assignments, users, leaderboard, pledge_counts
 
     data = request.json
     text = data.get("text", "").lower()
@@ -78,7 +77,28 @@ def webhook():
         send_message(get_weather())
         return "OK"
 
-    # 🏆 Leaderboard
+    # 📊 PLEDGE DUTY TRACKER
+    if "pledgeduty" in text:
+        pledge_counts[name] = pledge_counts.get(name, 0) + 1
+        send_message(f"📈 {name} has done pledgeduty {pledge_counts[name]} times")
+        return "OK"
+
+    # 🏆 PLEDGE DUTY LEADERBOARD
+    if "pleaderboard" in text:
+        if not pledge_counts:
+            send_message("No pledgeduty counts yet")
+            return "OK"
+
+        sorted_lb = sorted(pledge_counts.items(), key=lambda x: x[1], reverse=True)
+
+        msg = "📊 PledgeDuty Leaderboard:\n\n"
+        for i, (user, count) in enumerate(sorted_lb, 1):
+            msg += f"{i}. {user} — {count}\n"
+
+        send_message(msg)
+        return "OK"
+
+    # 🏆 ORIGINAL LEADERBOARD
     if "!leaderboard" in text:
         if not leaderboard:
             send_message("No claims yet")
@@ -93,7 +113,7 @@ def webhook():
         send_message(msg)
         return "OK"
 
-    # 🍞 Pledge trigger
+    # 🍞 PLEDGE SYSTEM
     if "pledge" in text:
         assignment_id = str(uuid.uuid4())
 
