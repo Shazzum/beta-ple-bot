@@ -71,7 +71,7 @@ def send_message(text):
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
 
 
-# 🌤 WEATHER FUNCTION (fixed Fahrenheit)
+# 🌤 WEATHER FUNCTION (Fahrenheit)
 def get_weather():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
@@ -122,11 +122,32 @@ def webhook():
         send_message(get_weather())
         return "OK"
 
-    # 📊 PLEDGE DUTY TRACKER
-    if "pledgeduty" in text:
+    # 📊 PLEDGE DUTY + ASSIGNMENT (FIXED)
+    if text.strip() == "pledgeduty":
+        # Track count
         pledge_counts[name] = pledge_counts.get(name, 0) + 1
         save_data()
-        send_message(f"📈 {name} has posted {pledge_counts[name]} duties")
+
+        # Create assignment
+        assignment_id = str(uuid.uuid4())
+
+        assignments.append({
+            "id": assignment_id,
+            "owner": name,
+            "claimed_by": None
+        })
+
+        if len(assignments) > 5:
+            assignments.pop(0)
+
+        link = f"{BASE_URL}/claim/{assignment_id}"
+
+        send_message(
+            f"🍞 {name} posted a pledge duty\n\n"
+            f"📈 Total duties: {pledge_counts[name]}\n\n"
+            f"Tap to claim:\n{link}"
+        )
+
         return "OK"
 
     # 🏆 PLEDGE DUTY LEADERBOARD
@@ -159,25 +180,6 @@ def webhook():
 
         send_message(msg)
         return "OK"
-
-    # 🍞 TRIGGER DUTY
-    if "pledgeduty" in text:
-        assignment_id = str(uuid.uuid4())
-
-        assignments.append({
-            "id": assignment_id,
-            "owner": name,
-            "claimed_by": None
-        })
-
-        if len(assignments) > 5:
-            assignments.pop(0)
-
-        link = f"{BASE_URL}/claim/{assignment_id}"
-
-        send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{link}"
-        )
 
     return "OK"
 
