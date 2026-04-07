@@ -1,38 +1,21 @@
 from flask import Flask, request
 import requests
 import uuid
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
+import pytz
 
 app = Flask(__name__)
 
 BOT_ID = "68219e78f1b2110053f1b4e4ed"
-BASE_URL = "https://beta-ple-bot.onrender.com"  # 🔥 CHANGE THIS
-
-# ✅ Fixed pledge list
-PLEDGES = {
-    "simms": "pledge simms",
-    "lane": "pledge lane",
-    "allen": "pledge allen",
-    "denton": "pledge denton",
-    "anderson": "pledge anderson",
-    "gillum": "pledge gillum",
-    "davis": "pledge davis",
-    "woodard": "pledge woodard",
-    "ballard": "pledge ballard",
-    "earls": "pledge earls",
-    "woolbright": "pledge woolbright",
-    "reddin": "pledge reddin",
-    "sommers": "pledge sommers",
-    "crum": "pledge crum",
-    "bell": "pledge bell",
-    "correll": "pledge correll",
-    "smith": "pledge smith",
-    "ellis": "pledge ellis",
-    "vance": "pledge vance",
-    "nelson": "pledge nelson"
-}
 
 assignments = []
+users = {}
 leaderboard = {}
+
+# Arkadelphia coordinates
+LAT = 34.1209
+LON = -93.0538
 
 
 def send_message(text):
@@ -40,16 +23,62 @@ def send_message(text):
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
 
 
+# 🌤 WEATHER FUNCTION
+def get_weather():
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+        f"&timezone=America/Chicago"
+    )
+
+    res = requests.get(url).json()
+    daily = res.get("daily", {})
+
+    if not daily:
+        return "Weather unavailable ❌"
+
+    max_temp = daily["temperature_2m_max"][0]
+    min_temp = daily["temperature_2m_min"][0]
+    rain = daily["precipitation_probability_max"][0]
+
+    return (
+        f"🌤 Arkadelphia Weather (Today)\n\n"
+        f"High: {max_temp}°F\n"
+        f"Low: {min_temp}°F\n"
+        f"Rain Chance: {rain}%"
+    )
+
+
+# ⏰ DAILY 8AM JOB
+def scheduled_weather():
+    print("Sending scheduled weather...")
+    send_message(get_weather())
+
+
+# Start scheduler
+scheduler = BackgroundScheduler(timezone="America/Chicago")
+scheduler.add_job(scheduled_weather, "cron", hour=8, minute=0)
+scheduler.start()
+
+
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments, leaderboard
+    global assignments, users, leaderboard
 
     data = request.json
-
-    text = (data.get("text") or "").lower()
+    text = data.get("text", "").lower()
     name = data.get("name")
+    user_id = data.get("user_id")
 
-    # 🏆 Leaderboard command
+    users[user_id] = name
+
+    # 🌤 WEATHER COMMAND
+    if "!weather" in text:
+        send_message(get_weather())
+        return "OK"
+
+    # 🏆 Leaderboard
     if "!leaderboard" in text:
         if not leaderboard:
             send_message("No claims yet")
@@ -58,15 +87,14 @@ def webhook():
         sorted_lb = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
 
         msg = "🏆 Leaderboard:\n\n"
-        for i, (pid, score) in enumerate(sorted_lb, 1):
-            display_name = PLEDGES.get(pid, "Unknown")
-            msg += f"{i}. {display_name} — {score}\n"
+        for i, (user, score) in enumerate(sorted_lb, 1):
+            msg += f"{i}. {user} — {score}\n"
 
         send_message(msg)
         return "OK"
 
-    # 🍞 Trigger
-    if "pledgeduty" in text:
+    # 🍞 Pledge trigger
+    if "pledge" in text:
         assignment_id = str(uuid.uuid4())
 
         assignments.append({
@@ -75,100 +103,51 @@ def webhook():
             "claimed_by": None
         })
 
-        # Keep only last 5
         if len(assignments) > 5:
             assignments.pop(0)
 
-        link = f"{BASE_URL}/claim/{assignment_id}"
+        links = []
+        for uid, uname in users.items():
+            link = f"https://your-app.onrender.com/claim/{assignment_id}/{uid}"
+            links.append(f"{uname}: {link}")
 
         send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{link}"
+            f"🍞 {name} posted a pledge duty\n\nTap your name to claim:\n\n" +
+            "\n".join(links)
         )
 
     return "OK"
 
 
-# 🔥 Claim page (buttons for pledges only)
-@app.route("/claim/<assignment_id>")
-def claim_page(assignment_id):
-
-    buttons = ""
-
-    for pid, pname in PLEDGES.items():
-        buttons += f"""
-        <form action="/submit/{assignment_id}/{pid}" method="post">
-            <button>{pname}</button>
-        </form>
-        """
-
-    return f"""
-    <html>
-    <head>
-        <title>Claim Duty</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                background: #0f172a;
-                color: white;
-                text-align: center;
-                padding: 20px;
-            }}
-            h1 {{
-                margin-bottom: 20px;
-            }}
-            button {{
-                width: 90%;
-                margin: 10px;
-                padding: 15px;
-                font-size: 18px;
-                border-radius: 12px;
-                border: none;
-                background: #22c55e;
-                color: white;
-                cursor: pointer;
-            }}
-        </style>
-    </head>
-    <body>
-        <h1>Select your name</h1>
-        {buttons}
-    </body>
-    </html>
-    """
-
-
-# 🔥 Handle claim
-@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
-def submit_claim(assignment_id, pid):
+@app.route("/claim/<assignment_id>/<user_id>")
+def claim(assignment_id, user_id):
     global assignments, leaderboard
 
     for a in assignments:
         if a["id"] == assignment_id:
 
             if a["claimed_by"] is not None:
-                return html_page("Already claimed ❌")
+                return styled_page("Already claimed ❌")
 
-            claimer = PLEDGES.get(pid, "Someone")
+            claimer = users.get(user_id, "Someone")
             a["claimed_by"] = claimer
 
-            leaderboard[pid] = leaderboard.get(pid, 0) + 1
+            leaderboard[claimer] = leaderboard.get(claimer, 0) + 1
 
             send_message(
                 f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
             )
 
-            return html_page(f"{claimer}, you got it 👍")
+            return styled_page(f"{claimer}, you got it 👍")
 
-    return html_page("This assignment expired ❌")
+    return styled_page("This assignment expired ❌")
 
 
-# 🎨 Confirmation page
-def html_page(message):
+def styled_page(message):
     return f"""
     <html>
     <head>
-        <title>Success</title>
+        <title>Pledge Claim</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{
@@ -187,6 +166,9 @@ def html_page(message):
                 border-radius: 20px;
                 text-align: center;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            }}
+            h1 {{
+                margin-bottom: 20px;
             }}
         </style>
     </head>
