@@ -1,9 +1,8 @@
 from flask import Flask, request
 import requests
 import uuid
-import json
-import os
 from apscheduler.schedulers.background import BackgroundScheduler
+from supabase import create_client
 
 app = Flask(__name__)
 
@@ -13,7 +12,10 @@ BASE_URL = "https://beta-ple-bot.onrender.com"
 LAT = 34.1209
 LON = -93.0538
 
-DATA_FILE = "data.json"
+# 🔥 SUPABASE SETUP
+SUPABASE_URL = "https://nanarwxrozdcajidmuba.supabase.co"
+SUPABASE_KEY = "sb_publishable_oBvZVUIfXr3haQ38sfPHRw_83C6Svzw"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 PLEDGES = {
     "simms": "pledge simms",
@@ -40,33 +42,26 @@ PLEDGES = {
 
 assignments = []
 
-# 🔄 LOAD DATA
-def load_data():
-    global leaderboard, pledge_counts
-
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            data = json.load(f)
-            leaderboard = data.get("leaderboard", {})
-            pledge_counts = data.get("pledge_counts", {})
-    else:
-        leaderboard = {}
-        pledge_counts = {}
-
-# 💾 SAVE DATA
-def save_data():
-    with open(DATA_FILE, "w") as f:
-        json.dump({
-            "leaderboard": leaderboard,
-            "pledge_counts": pledge_counts
-        }, f)
-
-load_data()
-
 
 def send_message(text):
     url = "https://api.groupme.com/v3/bots/post"
     requests.post(url, json={"bot_id": BOT_ID, "text": text})
+
+
+# 🔥 DATABASE HELPERS
+def add_score(table, name, amount):
+    existing = supabase.table(table).select("*").eq("name", name).execute()
+
+    if existing.data:
+        new_score = existing.data[0]["score"] + amount
+        supabase.table(table).update({"score": new_score}).eq("name", name).execute()
+    else:
+        supabase.table(table).insert({"name": name, "score": amount}).execute()
+
+
+def get_leaderboard(table):
+    res = supabase.table(table).select("*").order("score", desc=True).execute()
+    return res.data
 
 
 # 🌤 WEATHER
@@ -109,7 +104,7 @@ scheduler.start()
 
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments, leaderboard, pledge_counts
+    global assignments
 
     data = request.json
     text = (data.get("text") or "").lower()
@@ -120,7 +115,7 @@ def webhook():
         send_message(get_weather())
         return "OK"
 
-    # 🔥 ADMIN COMMAND (!give)
+    # 🔥 ADMIN (!give)
     if text.startswith("!give"):
         if name != "Mega":
             send_message("Unauthorized ❌")
@@ -133,6 +128,7 @@ def webhook():
             return "OK"
 
         pid = parts[1]
+
         try:
             amount = int(parts[2])
         except:
@@ -143,19 +139,16 @@ def webhook():
             send_message("Invalid pledge name")
             return "OK"
 
-        leaderboard[pid] = leaderboard.get(pid, 0) + amount
-        save_data()
+        add_score("leaderboard", pid, amount)
 
         send_message(
-            f"⚡ {PLEDGES[pid]} received {amount} duties\n"
-            f"New total: {leaderboard[pid]}"
+            f"⚡ {PLEDGES[pid]} received {amount} duties"
         )
         return "OK"
 
     # 📊 PLEDGEDUTY
     if text.strip() == "pledgeduty":
-        pledge_counts[name] = pledge_counts.get(name, 0) + 1
-        save_data()
+        add_score("pledge_counts", name, 1)
 
         assignment_id = str(uuid.uuid4())
 
@@ -172,7 +165,6 @@ def webhook():
 
         send_message(
             f"🍞 {name} posted a pledge duty\n\n"
-            f"📈 Total duties: {pledge_counts[name]}\n\n"
             f"Tap to claim:\n{link}"
         )
 
@@ -180,31 +172,23 @@ def webhook():
 
     # 🏆 PLEDGEDUTY LEADERBOARD
     if "pleaderboard" in text:
-        if not pledge_counts:
-            send_message("No duty counts yet")
-            return "OK"
-
-        sorted_lb = sorted(pledge_counts.items(), key=lambda x: x[1], reverse=True)
+        data = get_leaderboard("pledge_counts")
 
         msg = "📊 PledgeDuty Leaderboard:\n\n"
-        for i, (user, count) in enumerate(sorted_lb, 1):
-            msg += f"{i}. {user} — {count}\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {row['name']} — {row['score']}\n"
 
         send_message(msg)
         return "OK"
 
     # 🏆 CLAIM LEADERBOARD
     if "!leaderboard" in text:
-        if not leaderboard:
-            send_message("No claims yet")
-            return "OK"
-
-        sorted_lb = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
+        data = get_leaderboard("leaderboard")
 
         msg = "🏆 Leaderboard:\n\n"
-        for i, (pid, score) in enumerate(sorted_lb, 1):
-            display_name = PLEDGES.get(pid, "Unknown")
-            msg += f"{i}. {display_name} — {score}\n"
+        for i, row in enumerate(data, 1):
+            display_name = PLEDGES.get(row["name"], "Unknown")
+            msg += f"{i}. {display_name} — {row['score']}\n"
 
         send_message(msg)
         return "OK"
@@ -235,7 +219,7 @@ def claim_page(assignment_id):
 
 @app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
 def submit_claim(assignment_id, pid):
-    global assignments, leaderboard
+    global assignments
 
     for a in assignments:
         if a["id"] == assignment_id:
@@ -246,8 +230,7 @@ def submit_claim(assignment_id, pid):
             claimer = PLEDGES.get(pid, "Someone")
             a["claimed_by"] = claimer
 
-            leaderboard[pid] = leaderboard.get(pid, 0) + 1
-            save_data()
+            add_score("leaderboard", pid, 1)
 
             send_message(
                 f"🔥 {claimer} has claimed {a['owner']}'s pledge duty"
