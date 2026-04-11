@@ -104,6 +104,26 @@ scheduler.add_job(daily_rewards, "cron", hour=8, minute=0)
 scheduler.start()
 
 # =========================
+# 🔧 HELPER: extract ()
+# =========================
+def extract_parentheses(text):
+    results = []
+    current = ""
+    inside = False
+
+    for char in text:
+        if char == "(":
+            inside = True
+            current = ""
+        elif char == ")":
+            inside = False
+            results.append(current.strip())
+        elif inside:
+            current += char
+
+    return results
+
+# =========================
 # 🚀 WEBHOOK
 # =========================
 @app.route("/", methods=["POST"])
@@ -114,10 +134,12 @@ def webhook():
     text = (data.get("text") or "").lower()
     name = data.get("name")
 
+    # 💰 balance
     if text == "!balance":
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
+    # 💰 richlist
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
@@ -126,6 +148,7 @@ def webhook():
         send_message(msg)
         return "OK"
 
+    # 👑 blessall
     if text.startswith("!blessall"):
         if name != "Mega":
             send_message("Unauthorized ❌")
@@ -140,65 +163,35 @@ def webhook():
         send_message(f"🙏 Mega blessed everyone with +{amount}")
         return "OK"
 
+    # 🌤 weather
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    if text.startswith("!give"):
-        if name != "Mega":
-            send_message("Unauthorized ❌")
-            return "OK"
-
-        parts = text.split()
-        add_score("leaderboard", parts[1], int(parts[2]))
-        send_message("Updated leaderboard")
-        return "OK"
-
     # =========================
-    # 🎲 BET (NEW FORMAT)
+    # 🎲 CREATE BET
     # =========================
     if text.startswith("!bet"):
-        try:
-            parts = text.split('"')
-            question = parts[1]
-            remainder = parts[2]
+        parts = extract_parentheses(text)
 
-            options = []
-            current = ""
-            inside = False
-
-            for char in remainder:
-                if char == "(":
-                    inside = True
-                    current = ""
-                elif char == ")":
-                    inside = False
-                    options.append(current.strip())
-                elif inside:
-                    current += char
-
-            if len(options) < 2:
-                send_message("Need at least 2 options ❌")
-                return "OK"
-
-            options_str = ",".join(options)
-
-        except:
-            send_message("Invalid bet format ❌")
+        if len(parts) < 3:
+            send_message("Format: !bet (bet name) (option1) (option2)")
             return "OK"
+
+        bet_name = parts[0]
+        options = parts[1:]
 
         supabase.table("bets").insert({
             "id": str(uuid.uuid4()),
-            "question": question,
-            "options": options_str,
+            "question": bet_name,
+            "options": ",".join(options),
             "active": True,
             "resolved": False
         }).execute()
 
-        msg = f"🎲 NEW BET:\n\n{question}\n\n"
+        msg = f"🎲 NEW BET:\n\n{bet_name}\n\n"
         for o in options:
             msg += f"- {o}\n"
-        msg += "\nJoin with:\n!join \"" + question + "\" \"option\""
 
         send_message(msg)
         return "OK"
@@ -207,11 +200,13 @@ def webhook():
     # 🎲 JOIN
     # =========================
     if text.startswith("!join"):
-        parts = text.split('"')
-        bet_name = parts[1]
-        choice = parts[3]
+        parts = extract_parentheses(text)
+
+        bet_name = parts[0]
+        choice = parts[1]
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
+
         if not bet:
             send_message("Bet not found ❌")
             return "OK"
@@ -221,11 +216,6 @@ def webhook():
 
         if choice not in options:
             send_message("Invalid option ❌")
-            return "OK"
-
-        existing = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).eq("user", name).execute().data
-        if existing:
-            send_message("Already joined ❌")
             return "OK"
 
         if not subtract_balance(name, 100):
@@ -250,9 +240,9 @@ def webhook():
             send_message("Unauthorized ❌")
             return "OK"
 
-        parts = text.split('"')
-        bet_name = parts[1]
-        winning = parts[3]
+        parts = extract_parentheses(text)
+        bet_name = parts[0]
+        winning = parts[1]
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
         bet = bet[0]
@@ -281,33 +271,19 @@ def webhook():
             "winning_option": winning
         }).eq("id", bet["id"]).execute()
 
-        send_message(f"🏆 Bet resolved: {winning}")
+        send_message(f"🏆 BET RESOLVED!\nWinner: {winning}")
         return "OK"
 
     # =========================
-    # 🍞 PLEDGES
+    # 🍞 PLEDGE SYSTEM
     # =========================
     if text.strip() == "pledgeduty":
         add_score("pledge_counts", name, 1)
+
         assignment_id = str(uuid.uuid4())
         assignments.append({"id": assignment_id, "owner": name, "claimed_by": None})
+
         send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
-        return "OK"
-
-    if "pleaderboard" in text:
-        data = get_leaderboard("pledge_counts")
-        msg = "📊 PledgeDuty Leaderboard:\n\n"
-        for i, row in enumerate(data, 1):
-            msg += f"{i}. {row['name']} — {row['score']}\n"
-        send_message(msg)
-        return "OK"
-
-    if "!leaderboard" in text:
-        data = get_leaderboard("leaderboard")
-        msg = "🏆 Leaderboard:\n\n"
-        for i, row in enumerate(data, 1):
-            msg += f"{i}. {PLEDGES.get(row['name'],'Unknown')} — {row['score']}\n"
-        send_message(msg)
         return "OK"
 
     return "OK"
