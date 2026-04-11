@@ -13,7 +13,7 @@ LAT = 34.1209
 LON = -93.0538
 
 SUPABASE_URL = "https://nanarwxrozdcajidmuba.supabase.co"
-SUPABASE_KEY = "YOUR_KEY"
+SUPABASE_KEY = "sb_publishable_oBvZVUIfXr3haQ38sfPHRw_83C6Svzw"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 PLEDGES = {
