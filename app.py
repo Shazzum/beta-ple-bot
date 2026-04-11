@@ -63,7 +63,6 @@ def subtract_balance(name, amount):
     supabase.table("balances").update({"balance": bal - amount}).eq("name", name).execute()
     return True
 
-
 # =========================
 # 📊 LEADERBOARDS
 # =========================
@@ -79,10 +78,8 @@ def add_score(table, name, amount):
 def get_leaderboard(table):
     return supabase.table(table).select("*").order("score", desc=True).execute().data
 
-
 def send_message(text):
     requests.post("https://api.groupme.com/v3/bots/post", json={"bot_id": BOT_ID, "text": text})
-
 
 # =========================
 # 🌤 WEATHER
@@ -92,7 +89,6 @@ def get_weather():
     res = requests.get(url).json()
     daily = res.get("daily", {})
     return f"🌤 Arkadelphia Weather\nHigh: {round(daily['temperature_2m_max'][0])}°F\nLow: {round(daily['temperature_2m_min'][0])}°F"
-
 
 # =========================
 # ⏰ DAILY REWARDS
@@ -107,7 +103,6 @@ scheduler = BackgroundScheduler(timezone="America/Chicago")
 scheduler.add_job(daily_rewards, "cron", hour=8, minute=0)
 scheduler.start()
 
-
 # =========================
 # 🚀 WEBHOOK
 # =========================
@@ -119,12 +114,10 @@ def webhook():
     text = (data.get("text") or "").lower()
     name = data.get("name")
 
-    # 💰 BALANCE
     if text == "!balance":
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
-    # 💰 RICHLIST
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
@@ -133,61 +126,56 @@ def webhook():
         send_message(msg)
         return "OK"
 
-    # 👑 BLESS ALL
     if text.startswith("!blessall"):
         if name != "Mega":
             send_message("Unauthorized ❌")
             return "OK"
 
-        try:
-            amount = int(text.split()[1])
-        except:
-            send_message("Usage: !blessall [amount]")
-            return "OK"
-
+        amount = int(text.split()[1])
         users = supabase.table("balances").select("*").execute().data
+
         for u in users:
             add_balance(u["name"], amount)
 
         send_message(f"🙏 Mega blessed everyone with +{amount}")
         return "OK"
 
-    # 🌤 WEATHER
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    # 🔥 GIVE (UNCHANGED)
     if text.startswith("!give"):
         if name != "Mega":
             send_message("Unauthorized ❌")
             return "OK"
 
         parts = text.split()
-        pid = parts[1]
-        amount = int(parts[2])
-
-        add_score("leaderboard", pid, amount)
-        send_message(f"⚡ {PLEDGES[pid]} received {amount}")
+        add_score("leaderboard", parts[1], int(parts[2]))
+        send_message("Updated leaderboard")
         return "OK"
 
     # =========================
-    # 🎲 BET (FIXED)
+    # 🎲 BET (NEW FORMAT)
     # =========================
     if text.startswith("!bet"):
         try:
             parts = text.split('"')
-            if len(parts) < 3:
-                send_message("Format: !bet \"question\" 1. option / 2. option")
-                return "OK"
-
             question = parts[1]
-            raw_options = parts[2]
+            remainder = parts[2]
 
             options = []
-            for opt in raw_options.split("/"):
-                if "." in opt:
-                    options.append(opt.split(".", 1)[1].strip())
+            current = ""
+            inside = False
+
+            for char in remainder:
+                if char == "(":
+                    inside = True
+                    current = ""
+                elif char == ")":
+                    inside = False
+                    options.append(current.strip())
+                elif inside:
+                    current += char
 
             if len(options) < 2:
                 send_message("Need at least 2 options ❌")
@@ -207,20 +195,21 @@ def webhook():
             "resolved": False
         }).execute()
 
-        send_message(f"🎲 Bet created: {question}")
+        msg = f"🎲 NEW BET:\n\n{question}\n\n"
+        for o in options:
+            msg += f"- {o}\n"
+        msg += "\nJoin with:\n!join \"" + question + "\" \"option\""
+
+        send_message(msg)
         return "OK"
 
     # =========================
     # 🎲 JOIN
     # =========================
     if text.startswith("!join"):
-        try:
-            parts = text.split('"')
-            bet_name = parts[1]
-            choice = parts[3]
-        except:
-            send_message("Invalid format ❌")
-            return "OK"
+        parts = text.split('"')
+        bet_name = parts[1]
+        choice = parts[3]
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
         if not bet:
@@ -266,11 +255,8 @@ def webhook():
         winning = parts[3]
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
-        if not bet:
-            send_message("Bet not found ❌")
-            return "OK"
-
         bet = bet[0]
+
         entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
 
         if len(entries) < 5:
@@ -299,16 +285,13 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🍞 PLEDGE SYSTEM
+    # 🍞 PLEDGES
     # =========================
     if text.strip() == "pledgeduty":
         add_score("pledge_counts", name, 1)
-
         assignment_id = str(uuid.uuid4())
         assignments.append({"id": assignment_id, "owner": name, "claimed_by": None})
-
-        link = f"{BASE_URL}/claim/{assignment_id}"
-        send_message(f"🍞 {name} posted a pledge duty\n\n{link}")
+        send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
         return "OK"
 
     if "pleaderboard" in text:
@@ -328,39 +311,3 @@ def webhook():
         return "OK"
 
     return "OK"
-
-
-@app.route("/claim/<assignment_id>")
-def claim_page(assignment_id):
-    buttons = ""
-    for pid, pname in PLEDGES.items():
-        buttons += f"""
-        <form action="/submit/{assignment_id}/{pid}" method="post">
-            <button>{pname}</button>
-        </form>
-        """
-    return f"<html><body style='background:#0f172a;color:white;text-align:center;'><h1>Select your name</h1>{buttons}</body></html>"
-
-
-@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
-def submit_claim(assignment_id, pid):
-    global assignments
-
-    for a in assignments:
-        if a["id"] == assignment_id:
-            if a["claimed_by"] is not None:
-                return html_page("Already claimed ❌")
-
-            claimer = PLEDGES.get(pid, "Someone")
-            a["claimed_by"] = claimer
-
-            add_score("leaderboard", pid, 1)
-
-            send_message(f"🔥 {claimer} has claimed {a['owner']}'s pledge duty")
-            return html_page(f"{claimer}, you got it 👍")
-
-    return html_page("This assignment expired ❌")
-
-
-def html_page(message):
-    return f"<html><body style='background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;'><h1>{message}</h1></body></html>"
