@@ -12,12 +12,10 @@ BASE_URL = "https://beta-ple-bot.onrender.com"
 LAT = 34.1209
 LON = -93.0538
 
-# 🔥 SUPABASE
 SUPABASE_URL = "https://nanarwxrozdcajidmuba.supabase.co"
 SUPABASE_KEY = "YOUR_KEY"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🔥 PLEDGES (UNCHANGED)
 PLEDGES = {
     "simms": "pledge simms",
     "lane": "pledge lane",
@@ -67,14 +65,14 @@ def subtract_balance(name, amount):
 
 
 # =========================
-# 📊 LEADERBOARDS (UNCHANGED)
+# 📊 LEADERBOARDS
 # =========================
 def add_score(table, name, amount):
     existing = supabase.table(table).select("*").eq("name", name).execute()
-
     if existing.data:
-        new_score = existing.data[0]["score"] + amount
-        supabase.table(table).update({"score": new_score}).eq("name", name).execute()
+        supabase.table(table).update(
+            {"score": existing.data[0]["score"] + amount}
+        ).eq("name", name).execute()
     else:
         supabase.table(table).insert({"name": name, "score": amount}).execute()
 
@@ -87,7 +85,7 @@ def send_message(text):
 
 
 # =========================
-# 🌤 WEATHER (UNCHANGED)
+# 🌤 WEATHER
 # =========================
 def get_weather():
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=America/Chicago"
@@ -135,12 +133,31 @@ def webhook():
         send_message(msg)
         return "OK"
 
+    # 👑 BLESS ALL
+    if text.startswith("!blessall"):
+        if name != "Mega":
+            send_message("Unauthorized ❌")
+            return "OK"
+
+        try:
+            amount = int(text.split()[1])
+        except:
+            send_message("Usage: !blessall [amount]")
+            return "OK"
+
+        users = supabase.table("balances").select("*").execute().data
+        for u in users:
+            add_balance(u["name"], amount)
+
+        send_message(f"🙏 Mega blessed everyone with +{amount}")
+        return "OK"
+
     # 🌤 WEATHER
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    # 🔥 ADMIN GIVE (UNCHANGED)
+    # 🔥 GIVE (UNCHANGED)
     if text.startswith("!give"):
         if name != "Mega":
             send_message("Unauthorized ❌")
@@ -155,13 +172,32 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🎲 CREATE BET
+    # 🎲 BET (FIXED)
     # =========================
     if text.startswith("!bet"):
-        parts = text.split('"')
-        question = parts[1]
-        options = [o.split(".",1)[1].strip() for o in parts[2].split("/")]
-        options_str = ",".join(options)
+        try:
+            parts = text.split('"')
+            if len(parts) < 3:
+                send_message("Format: !bet \"question\" 1. option / 2. option")
+                return "OK"
+
+            question = parts[1]
+            raw_options = parts[2]
+
+            options = []
+            for opt in raw_options.split("/"):
+                if "." in opt:
+                    options.append(opt.split(".", 1)[1].strip())
+
+            if len(options) < 2:
+                send_message("Need at least 2 options ❌")
+                return "OK"
+
+            options_str = ",".join(options)
+
+        except:
+            send_message("Invalid bet format ❌")
+            return "OK"
 
         supabase.table("bets").insert({
             "id": str(uuid.uuid4()),
@@ -175,12 +211,16 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🎲 JOIN BET
+    # 🎲 JOIN
     # =========================
     if text.startswith("!join"):
-        parts = text.split('"')
-        bet_name = parts[1]
-        choice = parts[3]
+        try:
+            parts = text.split('"')
+            bet_name = parts[1]
+            choice = parts[3]
+        except:
+            send_message("Invalid format ❌")
+            return "OK"
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
         if not bet:
@@ -214,7 +254,7 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🎲 RESOLVE BET
+    # 🎲 RESOLVE
     # =========================
     if text.startswith("!resolve"):
         if name != "Mega":
@@ -226,8 +266,11 @@ def webhook():
         winning = parts[3]
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
-        bet = bet[0]
+        if not bet:
+            send_message("Bet not found ❌")
+            return "OK"
 
+        bet = bet[0]
         entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
 
         if len(entries) < 5:
@@ -256,7 +299,7 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🍞 PLEDGE SYSTEM (UNCHANGED)
+    # 🍞 PLEDGE SYSTEM
     # =========================
     if text.strip() == "pledgeduty":
         add_score("pledge_counts", name, 1)
@@ -265,7 +308,6 @@ def webhook():
         assignments.append({"id": assignment_id, "owner": name, "claimed_by": None})
 
         link = f"{BASE_URL}/claim/{assignment_id}"
-
         send_message(f"🍞 {name} posted a pledge duty\n\n{link}")
         return "OK"
 
@@ -286,3 +328,39 @@ def webhook():
         return "OK"
 
     return "OK"
+
+
+@app.route("/claim/<assignment_id>")
+def claim_page(assignment_id):
+    buttons = ""
+    for pid, pname in PLEDGES.items():
+        buttons += f"""
+        <form action="/submit/{assignment_id}/{pid}" method="post">
+            <button>{pname}</button>
+        </form>
+        """
+    return f"<html><body style='background:#0f172a;color:white;text-align:center;'><h1>Select your name</h1>{buttons}</body></html>"
+
+
+@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
+def submit_claim(assignment_id, pid):
+    global assignments
+
+    for a in assignments:
+        if a["id"] == assignment_id:
+            if a["claimed_by"] is not None:
+                return html_page("Already claimed ❌")
+
+            claimer = PLEDGES.get(pid, "Someone")
+            a["claimed_by"] = claimer
+
+            add_score("leaderboard", pid, 1)
+
+            send_message(f"🔥 {claimer} has claimed {a['owner']}'s pledge duty")
+            return html_page(f"{claimer}, you got it 👍")
+
+    return html_page("This assignment expired ❌")
+
+
+def html_page(message):
+    return f"<html><body style='background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;'><h1>{message}</h1></body></html>"
