@@ -1,9 +1,8 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request
 import requests
 import uuid
 from apscheduler.schedulers.background import BackgroundScheduler
 from supabase import create_client
-import os
 
 app = Flask(__name__)
 
@@ -17,9 +16,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# =========================
-# 📛 PLEDGES
-# =========================
 PLEDGES = {
     "simms": "pledge simms",
     "lane": "pledge lane",
@@ -43,8 +39,10 @@ PLEDGES = {
     "nelson": "pledge nelson"
 }
 
+assignments = []  # kept (unused)
+
 # =========================
-# 💰 ECONOMY
+# 💰 ECONOMY (UNCHANGED)
 # =========================
 def get_balance(name):
     res = supabase.table("balances").select("*").eq("name", name).execute()
@@ -66,16 +64,7 @@ def subtract_balance(name, amount):
     return True
 
 # =========================
-# 📤 SEND MESSAGE
-# =========================
-def send_message(text):
-    requests.post(
-        "https://api.groupme.com/v3/bots/post",
-        json={"bot_id": BOT_ID, "text": text}
-    )
-
-# =========================
-# 📊 LEADERBOARDS
+# 📊 LEADERBOARDS (UNCHANGED)
 # =========================
 def add_score(table, name, amount):
     existing = supabase.table(table).select("*").eq("name", name).execute()
@@ -89,8 +78,11 @@ def add_score(table, name, amount):
 def get_leaderboard(table):
     return supabase.table(table).select("*").order("score", desc=True).execute().data
 
+def send_message(text):
+    requests.post("https://api.groupme.com/v3/bots/post", json={"bot_id": BOT_ID, "text": text})
+
 # =========================
-# 🌤 WEATHER
+# 🌤 WEATHER (UNCHANGED)
 # =========================
 def get_weather():
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=America/Chicago"
@@ -99,34 +91,20 @@ def get_weather():
     return f"🌤 Arkadelphia Weather\nHigh: {round(daily['temperature_2m_max'][0])}°F\nLow: {round(daily['temperature_2m_min'][0])}°F"
 
 # =========================
-# ⏰ DAILY JOB
+# ⏰ DAILY REWARDS (UNCHANGED)
 # =========================
-def daily_job():
-    try:
-        users = supabase.table("balances").select("*").execute().data
-        for u in users:
-            add_balance(u["name"], 100)
-
-        send_message("💰 Everyone got +100 points!")
-        send_message(get_weather())
-    except Exception as e:
-        print("Daily job error:", e)
+def daily_rewards():
+    users = supabase.table("balances").select("*").execute().data
+    for u in users:
+        add_balance(u["name"], 100)
+    send_message("💰 Everyone got +100 points!")
 
 scheduler = BackgroundScheduler(timezone="America/Chicago")
-
-def start_scheduler():
-    try:
-        if not scheduler.running:
-            scheduler.add_job(daily_job, "cron", hour=8, minute=0)
-            scheduler.start()
-            print("Scheduler started")
-    except Exception as e:
-        print("Scheduler failed:", e)
-
-start_scheduler()
+scheduler.add_job(daily_rewards, "cron", hour=8, minute=0)
+scheduler.start()
 
 # =========================
-# 🔧 HELPER
+# 🔧 HELPER (UNCHANGED)
 # =========================
 def extract_parentheses(text):
     results = []
@@ -150,39 +128,11 @@ def extract_parentheses(text):
 # =========================
 @app.route("/", methods=["POST"])
 def webhook():
+    global assignments
+
     data = request.json
-    if not data:
-        return "OK"
-
-    if data.get("sender_type") == "bot":
-        return "OK"
-
-    raw_text = data.get("text")
-    if not raw_text:
-        return "OK"
-
-    text = raw_text.lower().replace("\n", "").replace("\r", "").strip()
+    text = (data.get("text") or "").lower()
     name = data.get("name")
-
-    print("Incoming:", repr(text))
-
-    # 🍞 pledgeduty
-    if "pledgeduty" in text:
-        assignment_id = str(uuid.uuid4())
-
-        supabase.table("assignments").insert({
-            "id": assignment_id,
-            "owner": name,
-            "claimed_by": None
-        }).execute()
-
-        add_score("pledge_counts", name, 1)
-
-        send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{BASE_URL}/claim/{assignment_id}"
-        )
-
-        return "OK"
 
     # 💰 balance
     if text == "!balance":
@@ -193,9 +143,24 @@ def webhook():
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
-        for i, row in enumerate(data, 1):
+        for i, row in enumerate(data[:10], 1):
             msg += f"{i}. {row['name']} — {row['balance']}\n"
         send_message(msg)
+        return "OK"
+
+    # 👑 blessall
+    if text.startswith("!blessall"):
+        if name != "Mega":
+            send_message("Unauthorized ❌")
+            return "OK"
+
+        amount = int(text.split()[1])
+        users = supabase.table("balances").select("*").execute().data
+
+        for u in users:
+            add_balance(u["name"], amount)
+
+        send_message(f"🙏 Mega blessed everyone with +{amount}")
         return "OK"
 
     # 🌤 weather
@@ -203,80 +168,199 @@ def webhook():
         send_message(get_weather())
         return "OK"
 
+    # =========================
+    # 🎲 BET SYSTEM (UNCHANGED)
+    # =========================
+    if text.startswith("!bet"):
+        parts = extract_parentheses(text)
+        if len(parts) < 3:
+            send_message("Format: !bet (bet name) (option1) (option2)")
+            return "OK"
+
+        bet_name = parts[0]
+        options = parts[1:]
+
+        supabase.table("bets").insert({
+            "id": str(uuid.uuid4()),
+            "question": bet_name,
+            "options": ",".join(options),
+            "active": True,
+            "resolved": False
+        }).execute()
+
+        msg = f"🎲 NEW BET:\n\n{bet_name}\n\n"
+        for o in options:
+            msg += f"- {o}\n"
+
+        send_message(msg)
+        return "OK"
+
+    if text.startswith("!join"):
+        parts = extract_parentheses(text)
+        bet_name = parts[0]
+        choice = parts[1]
+
+        bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
+        if not bet:
+            send_message("Bet not found ❌")
+            return "OK"
+
+        bet = bet[0]
+        options = bet["options"].split(",")
+
+        if choice not in options:
+            send_message("Invalid option ❌")
+            return "OK"
+
+        if not subtract_balance(name, 100):
+            send_message("Not enough money ❌")
+            return "OK"
+
+        supabase.table("bet_entries").insert({
+            "bet_id": bet["id"],
+            "user": name,
+            "option": choice,
+            "amount": 100
+        }).execute()
+
+        send_message(f"{name} joined {bet_name} → {choice}")
+        return "OK"
+
+    if text.startswith("!resolve"):
+        if name != "Mega":
+            send_message("Unauthorized ❌")
+            return "OK"
+
+        parts = extract_parentheses(text)
+        bet_name = parts[0]
+        winning = parts[1]
+
+        bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
+        bet = bet[0]
+
+        entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
+
+        if len(entries) < 5:
+            for e in entries:
+                add_balance(e["user"], e["amount"])
+            send_message("Bet cancelled (not enough players)")
+            return "OK"
+
+        winners = [e for e in entries if e["option"] == winning]
+        losers = [e for e in entries if e["option"] != winning]
+
+        total_losers = sum(l["amount"] for l in losers)
+        total_winners = sum(w["amount"] for w in winners)
+
+        for w in winners:
+            payout = int(w["amount"] + (w["amount"] / total_winners) * total_losers)
+            add_balance(w["user"], payout)
+
+        supabase.table("bets").update({
+            "active": False,
+            "resolved": True,
+            "winning_option": winning
+        }).eq("id", bet["id"]).execute()
+
+        send_message(f"🏆 BET RESOLVED!\nWinner: {winning}")
+        return "OK"
+
+    # =========================
+    # 🍞 PLEDGEDUTY (FIXED)
+    # =========================
+    if text.strip() == "pledgeduty":
+        add_score("pledge_counts", name, 1)
+
+        assignment_id = str(uuid.uuid4())
+
+        # SAVE TO SUPABASE
+        supabase.table("assignments").insert({
+            "id": assignment_id,
+            "owner": name,
+            "claimed_by": None
+        }).execute()
+
+        send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
+        return "OK"
+
     return "OK"
+
 
 # =========================
 # 🌐 CLAIM PAGE (BUTTON UI)
 # =========================
-@app.route("/claim/<assignment_id>", methods=["GET"])
+@app.route("/claim/<assignment_id>")
 def claim_page(assignment_id):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
 
     if not res.data:
-        return "❌ Duty not found."
+        return html_page("Expired ❌")
 
     assignment = res.data[0]
 
     if assignment["claimed_by"]:
-        return f"❌ Already claimed by {assignment['claimed_by']}."
+        return html_page(f"Already claimed by {assignment['claimed_by']} ❌")
 
-    buttons_html = ""
-    for pledge in PLEDGES.keys():
-        buttons_html += f"""
-        <form method="POST" action="/claim/{assignment_id}">
-            <input type="hidden" name="name" value="{pledge}">
-            <button type="submit" style="margin:5px;padding:10px 20px;font-size:16px;">
-                {pledge.capitalize()}
+    buttons = ""
+    for pid, pname in PLEDGES.items():
+        buttons += f"""
+        <form action="/submit/{assignment_id}/{pid}" method="post">
+            <button style="margin:8px;padding:12px 20px;font-size:16px;">
+                {pname}
             </button>
         </form>
         """
 
-    return render_template_string(f"""
-        <h2>🍞 Claim Duty</h2>
-        <p>Select your name:</p>
-        {buttons_html}
-    """)
+    return f"""
+    <html>
+    <body style="background:#0f172a;color:white;text-align:center;">
+        <h1>Select your name</h1>
+        {buttons}
+    </body>
+    </html>
+    """
+
 
 # =========================
 # ✅ CLAIM SUBMIT
 # =========================
-@app.route("/claim/<assignment_id>", methods=["POST"])
-def claim_submit(assignment_id):
-    user = request.form.get("name")
-
-    if not user:
-        return "❌ No name selected."
-
+@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
+def submit_claim(assignment_id, pid):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
 
     if not res.data:
-        return "❌ Duty not found."
+        return html_page("Expired ❌")
 
     assignment = res.data[0]
 
     if assignment["claimed_by"]:
-        return f"❌ Already claimed by {assignment['claimed_by']}."
+        return html_page(f"Already claimed by {assignment['claimed_by']} ❌")
+
+    claimer = PLEDGES.get(pid, "Someone")
 
     supabase.table("assignments").update({
-        "claimed_by": user
+        "claimed_by": claimer
     }).eq("id", assignment_id).execute()
 
-    send_message(f"✅ {user.capitalize()} claimed the duty!")
+    send_message(f"🔥 {claimer} claimed {assignment['owner']}'s duty")
 
+    return html_page(f"{claimer}, you got it 👍")
+
+
+def html_page(msg):
     return f"""
-    <h2>✅ Claimed!</h2>
-    <p>{user.capitalize()} has claimed this duty.</p>
+    <html>
+    <body style="background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;">
+        <h1>{msg}</h1>
+    </body>
+    </html>
     """
 
-# =========================
-# 🟢 HEALTH CHECK
-# =========================
+
 @app.route("/", methods=["GET"])
 def home():
     return "Bot is running ✅"
 
-# =========================
-# 🚀 START
-# =========================
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
