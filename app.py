@@ -144,6 +144,52 @@ def webhook():
     text = (data.get("text") or "").lower()
     name = data.get("name")
 
+    # 📊 ODDS
+    if text.startswith("!odds"):
+        parts = extract_parentheses(text)
+    
+        if len(parts) < 1:
+            send_message("Format: !odds (bet name)")
+            return "OK"
+    
+        bet_name = parts[0]
+    
+        bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
+    
+        if not bet:
+            send_message("Bet not found ❌")
+            return "OK"
+    
+        bet = bet[0]
+        options = [o.strip() for o in bet["options"].split(",")]
+    
+        entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
+    
+        if not entries:
+            send_message("No bets placed yet ❌")
+            return "OK"
+    
+        counts = {o: 0 for o in options}
+    
+        for e in entries:
+            counts[e["option"]] += 1
+    
+        total = sum(counts.values())
+    
+        msg = f"📊 ODDS: {bet_name}\n\n"
+    
+        for opt in options:
+            count = counts[opt]
+            if count == 0:
+                msg += f"{opt}: 0 bets\n"
+            else:
+                pct = round((count / total) * 100)
+                payout = round(total / count, 2)
+                msg += f"{opt}: {count} bets ({pct}%) | ~x{payout}\n"
+    
+        send_message(msg)
+        return "OK"
+    
     if text == "!balance":
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
