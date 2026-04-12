@@ -17,6 +17,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# =========================
+# 📛 PLEDGES (RESTORED)
+# =========================
 PLEDGES = {
     "simms": "pledge simms",
     "lane": "pledge lane",
@@ -39,8 +42,6 @@ PLEDGES = {
     "vance": "pledge vance",
     "nelson": "pledge nelson"
 }
-
-assignments = []
 
 # =========================
 # 💰 ECONOMY
@@ -79,7 +80,9 @@ def send_message(text):
 def add_score(table, name, amount):
     existing = supabase.table(table).select("*").eq("name", name).execute()
     if existing.data:
-        supabase.table(table).update({"score": existing.data[0]["score"] + amount}).eq("name", name).execute()
+        supabase.table(table).update(
+            {"score": existing.data[0]["score"] + amount}
+        ).eq("name", name).execute()
     else:
         supabase.table(table).insert({"name": name, "score": amount}).execute()
 
@@ -96,7 +99,7 @@ def get_weather():
     return f"🌤 Arkadelphia Weather\nHigh: {round(daily['temperature_2m_max'][0])}°F\nLow: {round(daily['temperature_2m_min'][0])}°F"
 
 # =========================
-# ⏰ DAILY JOB (SAFE)
+# ⏰ DAILY JOB
 # =========================
 def daily_job():
     try:
@@ -123,7 +126,7 @@ def start_scheduler():
 start_scheduler()
 
 # =========================
-# 🔧 HELPER
+# 🔧 HELPER (RESTORED)
 # =========================
 def extract_parentheses(text):
     results = []
@@ -143,33 +146,10 @@ def extract_parentheses(text):
     return results
 
 # =========================
-# 📊 LIVE ODDS
-# =========================
-def send_odds(bet):
-    entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
-
-    if not entries:
-        return
-
-    options = bet["options"].split(",")
-
-    msg = "📊 Current Odds:\n\n"
-
-    for opt in options:
-        users = [e for e in entries if e["option"] == opt]
-        total = sum(e["amount"] for e in users)
-
-        msg += f"{opt} — {len(users)} players ({total})\n"
-
-    send_message(msg)
-
-# =========================
 # 🚀 WEBHOOK
 # =========================
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments
-
     data = request.json
     if not data:
         return "OK"
@@ -188,20 +168,15 @@ def webhook():
 
     # 🍞 pledgeduty
     if "pledgeduty" in text:
-        print("PLEDGEDUTY TRIGGERED")
-
-        add_score("pledge_counts", name, 1)
-
         assignment_id = str(uuid.uuid4())
 
-        assignments.append({
+        supabase.table("assignments").insert({
             "id": assignment_id,
             "owner": name,
             "claimed_by": None
-        })
+        }).execute()
 
-        if len(assignments) > 5:
-            assignments.pop(0)
+        add_score("pledge_counts", name, 1)
 
         send_message(
             f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{BASE_URL}/claim/{assignment_id}"
@@ -214,7 +189,7 @@ def webhook():
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
-    # 💰 richlist (ALL)
+    # 💰 richlist
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
@@ -231,7 +206,30 @@ def webhook():
     return "OK"
 
 # =========================
-# 🟢 HEALTH CHECK ROUTE
+# ✅ CLAIM ROUTE
+# =========================
+@app.route("/claim/<assignment_id>", methods=["GET"])
+def claim(assignment_id):
+    res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
+
+    if not res.data:
+        return "❌ Duty not found."
+
+    assignment = res.data[0]
+
+    if assignment["claimed_by"]:
+        return "❌ This duty has already been claimed."
+
+    supabase.table("assignments").update({
+        "claimed_by": "claimed"
+    }).eq("id", assignment_id).execute()
+
+    send_message("✅ Duty claimed!")
+
+    return "You successfully claimed this duty! 🎉"
+
+# =========================
+# 🟢 HEALTH CHECK
 # =========================
 @app.route("/", methods=["GET"])
 def home():
