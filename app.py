@@ -12,6 +12,8 @@ BASE_URL = "https://beta-ple-bot.onrender.com"
 LAT = 34.1209
 LON = -93.0538
 
+import os
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
