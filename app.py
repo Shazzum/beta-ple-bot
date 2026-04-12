@@ -180,25 +180,28 @@ def webhook():
     # =========================
     # 🍞 PLEDGEDUTY (FIXED)
     # =========================
-    if text.startswith("pledgeduty"):
-        add_score("pledge_counts", name, 1)
+    if "pledgeduty" in text:
+    print("PLEDGEDUTY TRIGGERED")
 
-        assignment_id = str(uuid.uuid4())
+    add_score("pledge_counts", name, 1)
 
-        assignments.append({
-            "id": assignment_id,
-            "owner": name,
-            "claimed_by": None
-        })
+    assignment_id = str(uuid.uuid4())
 
-        if len(assignments) > 5:
-            assignments.pop(0)
+    assignments.append({
+        "id": assignment_id,
+        "owner": name,
+        "claimed_by": None
+    })
 
-        send_message(
-            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{BASE_URL}/claim/{assignment_id}"
-        )
+    if len(assignments) > 5:
+        assignments.pop(0)
 
-        return "OK"
+    send_message(
+        f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{BASE_URL}/claim/{assignment_id}"
+    )
+
+    return "OK"
+   
 
     # =========================
     # 💰 BALANCE
