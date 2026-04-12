@@ -3,6 +3,7 @@ import requests
 import uuid
 from apscheduler.schedulers.background import BackgroundScheduler
 from supabase import create_client
+import os
 
 app = Flask(__name__)
 
@@ -12,13 +13,10 @@ BASE_URL = "https://beta-ple-bot.onrender.com"
 LAT = 34.1209
 LON = -93.0538
 
-import os
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🔥 PLEDGES
 PLEDGES = {
     "simms": "pledge simms",
     "lane": "pledge lane",
@@ -98,19 +96,31 @@ def get_weather():
     return f"🌤 Arkadelphia Weather\nHigh: {round(daily['temperature_2m_max'][0])}°F\nLow: {round(daily['temperature_2m_min'][0])}°F"
 
 # =========================
-# ⏰ DAILY JOB
+# ⏰ DAILY JOB (SAFE)
 # =========================
 def daily_job():
-    users = supabase.table("balances").select("*").execute().data
-    for u in users:
-        add_balance(u["name"], 100)
+    try:
+        users = supabase.table("balances").select("*").execute().data
+        for u in users:
+            add_balance(u["name"], 100)
 
-    send_message("💰 Everyone got +100 points!")
-    send_message(get_weather())
+        send_message("💰 Everyone got +100 points!")
+        send_message(get_weather())
+    except Exception as e:
+        print("Daily job error:", e)
 
 scheduler = BackgroundScheduler(timezone="America/Chicago")
-scheduler.add_job(daily_job, "cron", hour=8, minute=0)
-scheduler.start()
+
+def start_scheduler():
+    try:
+        if not scheduler.running:
+            scheduler.add_job(daily_job, "cron", hour=8, minute=0)
+            scheduler.start()
+            print("Scheduler started")
+    except Exception as e:
+        print("Scheduler failed:", e)
+
+start_scheduler()
 
 # =========================
 # 🔧 HELPER
@@ -154,14 +164,13 @@ def send_odds(bet):
     send_message(msg)
 
 # =========================
-# 🚀 WEBHOOK (FIXED)
+# 🚀 WEBHOOK
 # =========================
 @app.route("/", methods=["POST"])
 def webhook():
     global assignments
 
     data = request.json
-
     if not data:
         return "OK"
 
@@ -172,14 +181,12 @@ def webhook():
     if not raw_text:
         return "OK"
 
-    text = raw_text.lower().strip()
+    text = raw_text.lower().replace("\n", "").replace("\r", "").strip()
     name = data.get("name")
 
     print("Incoming:", repr(text))
 
-    # =========================
-    # 🍞 PLEDGEDUTY (FIXED)
-    # =========================
+    # 🍞 pledgeduty
     if "pledgeduty" in text:
         print("PLEDGEDUTY TRIGGERED")
 
@@ -201,161 +208,37 @@ def webhook():
         )
 
         return "OK"
-   
 
-    # =========================
-    # 💰 BALANCE
-    # =========================
+    # 💰 balance
     if text == "!balance":
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
-    # =========================
-    # 💰 RICHLIST (ALL USERS)
-    # =========================
+    # 💰 richlist (ALL)
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
-
         msg = "💰 Richlist:\n\n"
         for i, row in enumerate(data, 1):
             msg += f"{i}. {row['name']} — {row['balance']}\n"
-
         send_message(msg)
         return "OK"
 
-    # =========================
-    # 👑 BLESSALL
-    # =========================
-    if text.startswith("!blessall"):
-        if name != "Mega":
-            send_message("Unauthorized ❌")
-            return "OK"
-
-        amount = int(text.split()[1])
-
-        users = supabase.table("balances").select("*").execute().data
-        for u in users:
-            add_balance(u["name"], amount)
-
-        send_message(f"🙏 Mega blessed everyone with +{amount}")
-        return "OK"
-
-    # =========================
-    # 🌤 WEATHER
-    # =========================
+    # 🌤 weather
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    # =========================
-    # 🎲 BET
-    # =========================
-    if text.startswith("!bet"):
-        parts = extract_parentheses(text)
-
-        if len(parts) < 3:
-            send_message("Format: !bet (name) (option1) (option2)")
-            return "OK"
-
-        bet_name = parts[0]
-        options = parts[1:]
-
-        supabase.table("bets").insert({
-            "id": str(uuid.uuid4()),
-            "question": bet_name,
-            "options": ",".join(options),
-            "active": True,
-            "resolved": False
-        }).execute()
-
-        msg = f"🎲 NEW BET:\n\n{bet_name}\n\n"
-        for o in options:
-            msg += f"- {o}\n"
-
-        send_message(msg)
-        return "OK"
-
-    # =========================
-    # 🎲 JOIN
-    # =========================
-    if text.startswith("!join"):
-        parts = extract_parentheses(text)
-
-        bet_name = parts[0]
-        choice = parts[1]
-
-        bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
-        if not bet:
-            send_message("Bet not found ❌")
-            return "OK"
-
-        bet = bet[0]
-        options = bet["options"].split(",")
-
-        if choice not in options:
-            send_message("Invalid option ❌")
-            return "OK"
-
-        existing = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).eq("user", name).execute().data
-        if existing:
-            send_message("Already joined ❌")
-            return "OK"
-
-        if not subtract_balance(name, 100):
-            send_message("Not enough money ❌")
-            return "OK"
-
-        supabase.table("bet_entries").insert({
-            "bet_id": bet["id"],
-            "user": name,
-            "option": choice,
-            "amount": 100
-        }).execute()
-
-        send_message(f"{name} joined {bet_name} → {choice}")
-        send_odds(bet)
-        return "OK"
-
-    # =========================
-    # 🎲 RESOLVE
-    # =========================
-    if text.startswith("!resolve"):
-        if name != "Mega":
-            send_message("Unauthorized ❌")
-            return "OK"
-
-        parts = extract_parentheses(text)
-        bet_name = parts[0]
-        winning = parts[1]
-
-        bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
-        bet = bet[0]
-
-        entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
-
-        if len(entries) < 5:
-            for e in entries:
-                add_balance(e["user"], e["amount"])
-            send_message("Bet cancelled (not enough players)")
-            return "OK"
-
-        winners = [e for e in entries if e["option"] == winning]
-        losers = [e for e in entries if e["option"] != winning]
-
-        total_losers = sum(l["amount"] for l in losers)
-        total_winners = sum(w["amount"] for w in winners)
-
-        for w in winners:
-            payout = int(w["amount"] + (w["amount"] / total_winners) * total_losers)
-            add_balance(w["user"], payout)
-
-        supabase.table("bets").update({
-            "active": False,
-            "resolved": True,
-            "winning_option": winning
-        }).eq("id", bet["id"]).execute()
-
-        send_message(f"🏆 BET RESOLVED!\nWinner: {winning}")
-        return "OK"
-
     return "OK"
+
+# =========================
+# 🟢 HEALTH CHECK ROUTE
+# =========================
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot is running ✅"
+
+# =========================
+# 🚀 START
+# =========================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
