@@ -148,10 +148,11 @@ def webhook():
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
+    # ✅ FULL RICHLIST
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
-        for i, row in enumerate(data[:10], 1):
+        for i, row in enumerate(data, 1):
             msg += f"{i}. {row['name']} — {row['balance']}\n"
         send_message(msg)
         return "OK"
@@ -167,11 +168,81 @@ def webhook():
         send_message(f"🙏 Mega blessed everyone with +{amount}")
         return "OK"
 
+    # 👑 GIVE DUTIES
+    if text.startswith("!give"):
+        if name != "Mega":
+            send_message("Unauthorized ❌")
+            return "OK"
+
+        parts = text.split()
+
+        if len(parts) != 3:
+            send_message("Usage: !give (pledge) (amount)")
+            return "OK"
+
+        pid = parts[1].lower()
+
+        try:
+            amount = int(parts[2])
+        except:
+            send_message("Amount must be a number ❌")
+            return "OK"
+
+        if pid not in PLEDGES:
+            send_message("Invalid pledge name ❌")
+            return "OK"
+
+        res = supabase.table("pledge_leaderboard").select("*").eq("name", pid).execute()
+
+        if res.data:
+            new_score = res.data[0]["score"] + amount
+            supabase.table("pledge_leaderboard").update({
+                "score": new_score
+            }).eq("name", pid).execute()
+        else:
+            new_score = amount
+            supabase.table("pledge_leaderboard").insert({
+                "name": pid,
+                "score": amount
+            }).execute()
+
+        send_message(f"⚡ {PLEDGES[pid]} received +{amount} duties\nNew total: {new_score}")
+        return "OK"
+
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    # 🎲 CREATE BET (FIXED)
+    # 🏆 LEADERBOARDS
+    if text == "!leaderboard":
+        data = supabase.table("pledge_leaderboard").select("*").order("score", desc=True).execute().data
+
+        if not data:
+            send_message("No claims yet ❌")
+            return "OK"
+
+        msg = "🏆 Pledge Leaderboard:\n\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {PLEDGES.get(row['name'], row['name'])} — {row['score']}\n"
+
+        send_message(msg)
+        return "OK"
+
+    if text == "!pleaderboard":
+        data = supabase.table("duty_posts").select("*").order("count", desc=True).execute().data
+
+        if not data:
+            send_message("No duties posted yet ❌")
+            return "OK"
+
+        msg = "📊 Duty Post Leaderboard:\n\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {row['name']} — {row['count']}\n"
+
+        send_message(msg)
+        return "OK"
+
+    # 🎲 BETS (UNCHANGED LOGIC)
     if text.startswith("!bet"):
         parts = extract_parentheses(text)
         if len(parts) < 2:
@@ -196,7 +267,6 @@ def webhook():
         send_message(msg)
         return "OK"
 
-    # 🎲 JOIN (FIXED)
     if text.startswith("!join"):
         parts = extract_parentheses(text)
         if len(parts) < 2:
@@ -238,7 +308,6 @@ def webhook():
         send_message(f"{name} joined {bet_name} → {matched}")
         return "OK"
 
-    # 🎲 RESOLVE (UNCHANGED)
     if text.startswith("!resolve"):
         if name != "Mega":
             send_message("Unauthorized ❌")
@@ -293,42 +362,8 @@ def webhook():
         send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
         return "OK"
 
-    # 🏆 LEADERBOARDS
-    # 🏆 LEADERBOARDS
-if text == "!leaderboard":
-    data = supabase.table("pledge_leaderboard").select("*").order("score", desc=True).execute().data
-
-    if not data:
-        send_message("No claims yet ❌")
-        return "OK"
-
-    msg = "🏆 Pledge Leaderboard:\n\n"
-    for i, row in enumerate(data, 1):
-        msg += f"{i}. {PLEDGES.get(row['name'], row['name'])} — {row['score']}\n"
-
-    send_message(msg)
     return "OK"
 
-if text == "!pleaderboard":
-    data = supabase.table("duty_posts").select("*").order("count", desc=True).execute().data
-
-    if not data:
-        send_message("No duties posted yet ❌")
-        return "OK"
-
-    msg = "📊 Duty Post Leaderboard:\n\n"
-    for i, row in enumerate(data, 1):
-        msg += f"{i}. {row['name']} — {row['count']}\n"
-
-    send_message(msg)
-    return "OK"
-
-
-    return "OK"
-
-# =========================
-# CLAIM PAGE
-# =========================
 @app.route("/claim/<assignment_id>")
 def claim_page(assignment_id):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
@@ -350,9 +385,6 @@ def claim_page(assignment_id):
 
     return f"<h1>Select your name</h1>{buttons}"
 
-# =========================
-# CLAIM SUBMIT
-# =========================
 @app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
 def submit_claim(assignment_id, pid):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
