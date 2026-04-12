@@ -16,6 +16,7 @@ SUPABASE_URL = "https://nanarwxrozdcajidmuba.supabase.co"
 SUPABASE_KEY = "YOUR_KEY"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 🔥 PLEDGES
 PLEDGES = {
     "simms": "pledge simms",
     "lane": "pledge lane",
@@ -151,46 +152,92 @@ def send_odds(bet):
     send_message(msg)
 
 # =========================
-# 🚀 WEBHOOK
+# 🚀 WEBHOOK (FIXED)
 # =========================
 @app.route("/", methods=["POST"])
 def webhook():
     global assignments
 
     data = request.json
-    text = (data.get("text") or "").lower().strip()
+
+    if not data:
+        return "OK"
+
+    if data.get("sender_type") == "bot":
+        return "OK"
+
+    raw_text = data.get("text")
+    if not raw_text:
+        return "OK"
+
+    text = raw_text.lower().strip()
     name = data.get("name")
 
-    # 💰 balance
+    print("Incoming:", repr(text))
+
+    # =========================
+    # 🍞 PLEDGEDUTY (FIXED)
+    # =========================
+    if text.startswith("pledgeduty"):
+        add_score("pledge_counts", name, 1)
+
+        assignment_id = str(uuid.uuid4())
+
+        assignments.append({
+            "id": assignment_id,
+            "owner": name,
+            "claimed_by": None
+        })
+
+        if len(assignments) > 5:
+            assignments.pop(0)
+
+        send_message(
+            f"🍞 {name} posted a pledge duty\n\nTap to claim:\n{BASE_URL}/claim/{assignment_id}"
+        )
+
+        return "OK"
+
+    # =========================
+    # 💰 BALANCE
+    # =========================
     if text == "!balance":
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
-    # 💰 richlist (FIXED: shows ALL)
+    # =========================
+    # 💰 RICHLIST (ALL USERS)
+    # =========================
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
+
         msg = "💰 Richlist:\n\n"
         for i, row in enumerate(data, 1):
             msg += f"{i}. {row['name']} — {row['balance']}\n"
+
         send_message(msg)
         return "OK"
 
-    # 👑 blessall
+    # =========================
+    # 👑 BLESSALL
+    # =========================
     if text.startswith("!blessall"):
         if name != "Mega":
             send_message("Unauthorized ❌")
             return "OK"
 
         amount = int(text.split()[1])
-        users = supabase.table("balances").select("*").execute().data
 
+        users = supabase.table("balances").select("*").execute().data
         for u in users:
             add_balance(u["name"], amount)
 
         send_message(f"🙏 Mega blessed everyone with +{amount}")
         return "OK"
 
-    # 🌤 weather
+    # =========================
+    # 🌤 WEATHER
+    # =========================
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
@@ -306,71 +353,4 @@ def webhook():
         send_message(f"🏆 BET RESOLVED!\nWinner: {winning}")
         return "OK"
 
-    # =========================
-    # 🍞 PLEDGEDUTY
-    # =========================
-    if "pledgeduty" in text:
-        add_score("pledge_counts", name, 1)
-
-        assignment_id = str(uuid.uuid4())
-        assignments.append({"id": assignment_id, "owner": name, "claimed_by": None})
-
-        if len(assignments) > 5:
-            assignments.pop(0)
-
-        send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
-        return "OK"
-
-    # =========================
-    # 🏆 PLEDGE LEADERBOARDS
-    # =========================
-    if "pleaderboard" in text:
-        data = get_leaderboard("pledge_counts")
-        msg = "📊 PledgeDuty Leaderboard:\n\n"
-        for i, row in enumerate(data, 1):
-            msg += f"{i}. {row['name']} — {row['score']}\n"
-        send_message(msg)
-        return "OK"
-
-    if "!leaderboard" in text:
-        data = get_leaderboard("leaderboard")
-        msg = "🏆 Leaderboard:\n\n"
-        for i, row in enumerate(data, 1):
-            msg += f"{i}. {PLEDGES.get(row['name'],'Unknown')} — {row['score']}\n"
-        send_message(msg)
-        return "OK"
-
     return "OK"
-
-# =========================
-# 🍞 CLAIM UI
-# =========================
-@app.route("/claim/<assignment_id>")
-def claim_page(assignment_id):
-    buttons = ""
-    for pid, pname in PLEDGES.items():
-        buttons += f"""
-        <form action="/submit/{assignment_id}/{pid}" method="post">
-            <button>{pname}</button>
-        </form>
-        """
-    return f"<html><body style='background:#0f172a;color:white;text-align:center;'><h1>Select your name</h1>{buttons}</body></html>"
-
-@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
-def submit_claim(assignment_id, pid):
-    global assignments
-
-    for a in assignments:
-        if a["id"] == assignment_id:
-            if a["claimed_by"] is not None:
-                return "<h1>Already claimed ❌</h1>"
-
-            claimer = PLEDGES.get(pid, "Someone")
-            a["claimed_by"] = claimer
-
-            add_score("leaderboard", pid, 1)
-
-            send_message(f"🔥 {claimer} claimed {a['owner']}'s duty")
-            return "<h1>Success 👍</h1>"
-
-    return "<h1>Expired ❌</h1>"
