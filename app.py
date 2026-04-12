@@ -13,7 +13,7 @@ LAT = 34.1209
 LON = -93.0538
 
 SUPABASE_URL = "https://nanarwxrozdcajidmuba.supabase.co"
-SUPABASE_KEY = "sb_publishable_oBvZVUIfXr3haQ38sfPHRw_83C6Svzw"
+SUPABASE_KEY = "YOUR_KEY"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 PLEDGES = {
@@ -64,22 +64,26 @@ def subtract_balance(name, amount):
     return True
 
 # =========================
+# 📤 SEND MESSAGE
+# =========================
+def send_message(text):
+    requests.post(
+        "https://api.groupme.com/v3/bots/post",
+        json={"bot_id": BOT_ID, "text": text}
+    )
+
+# =========================
 # 📊 LEADERBOARDS
 # =========================
 def add_score(table, name, amount):
     existing = supabase.table(table).select("*").eq("name", name).execute()
     if existing.data:
-        supabase.table(table).update(
-            {"score": existing.data[0]["score"] + amount}
-        ).eq("name", name).execute()
+        supabase.table(table).update({"score": existing.data[0]["score"] + amount}).eq("name", name).execute()
     else:
         supabase.table(table).insert({"name": name, "score": amount}).execute()
 
 def get_leaderboard(table):
     return supabase.table(table).select("*").order("score", desc=True).execute().data
-
-def send_message(text):
-    requests.post("https://api.groupme.com/v3/bots/post", json={"bot_id": BOT_ID, "text": text})
 
 # =========================
 # 🌤 WEATHER
@@ -91,20 +95,22 @@ def get_weather():
     return f"🌤 Arkadelphia Weather\nHigh: {round(daily['temperature_2m_max'][0])}°F\nLow: {round(daily['temperature_2m_min'][0])}°F"
 
 # =========================
-# ⏰ DAILY REWARDS
+# ⏰ DAILY JOB
 # =========================
-def daily_rewards():
+def daily_job():
     users = supabase.table("balances").select("*").execute().data
     for u in users:
         add_balance(u["name"], 100)
+
     send_message("💰 Everyone got +100 points!")
+    send_message(get_weather())
 
 scheduler = BackgroundScheduler(timezone="America/Chicago")
-scheduler.add_job(daily_rewards, "cron", hour=8, minute=0)
+scheduler.add_job(daily_job, "cron", hour=8, minute=0)
 scheduler.start()
 
 # =========================
-# 🔧 HELPER: extract ()
+# 🔧 HELPER
 # =========================
 def extract_parentheses(text):
     results = []
@@ -124,6 +130,27 @@ def extract_parentheses(text):
     return results
 
 # =========================
+# 📊 LIVE ODDS
+# =========================
+def send_odds(bet):
+    entries = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).execute().data
+
+    if not entries:
+        return
+
+    options = bet["options"].split(",")
+
+    msg = "📊 Current Odds:\n\n"
+
+    for opt in options:
+        users = [e for e in entries if e["option"] == opt]
+        total = sum(e["amount"] for e in users)
+
+        msg += f"{opt} — {len(users)} players ({total})\n"
+
+    send_message(msg)
+
+# =========================
 # 🚀 WEBHOOK
 # =========================
 @app.route("/", methods=["POST"])
@@ -131,7 +158,7 @@ def webhook():
     global assignments
 
     data = request.json
-    text = (data.get("text") or "").lower()
+    text = (data.get("text") or "").lower().strip()
     name = data.get("name")
 
     # 💰 balance
@@ -139,11 +166,11 @@ def webhook():
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
-    # 💰 richlist
+    # 💰 richlist (FIXED: shows ALL)
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
-        for i, row in enumerate(data[:10], 1):
+        for i, row in enumerate(data, 1):
             msg += f"{i}. {row['name']} — {row['balance']}\n"
         send_message(msg)
         return "OK"
@@ -169,13 +196,13 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🎲 CREATE BET
+    # 🎲 BET
     # =========================
     if text.startswith("!bet"):
         parts = extract_parentheses(text)
 
         if len(parts) < 3:
-            send_message("Format: !bet (bet name) (option1) (option2)")
+            send_message("Format: !bet (name) (option1) (option2)")
             return "OK"
 
         bet_name = parts[0]
@@ -206,7 +233,6 @@ def webhook():
         choice = parts[1]
 
         bet = supabase.table("bets").select("*").eq("question", bet_name).eq("active", True).execute().data
-
         if not bet:
             send_message("Bet not found ❌")
             return "OK"
@@ -216,6 +242,11 @@ def webhook():
 
         if choice not in options:
             send_message("Invalid option ❌")
+            return "OK"
+
+        existing = supabase.table("bet_entries").select("*").eq("bet_id", bet["id"]).eq("user", name).execute().data
+        if existing:
+            send_message("Already joined ❌")
             return "OK"
 
         if not subtract_balance(name, 100):
@@ -230,6 +261,7 @@ def webhook():
         }).execute()
 
         send_message(f"{name} joined {bet_name} → {choice}")
+        send_odds(bet)
         return "OK"
 
     # =========================
@@ -275,15 +307,70 @@ def webhook():
         return "OK"
 
     # =========================
-    # 🍞 PLEDGE SYSTEM
+    # 🍞 PLEDGEDUTY
     # =========================
-    if text.strip() == "pledgeduty":
+    if "pledgeduty" in text:
         add_score("pledge_counts", name, 1)
 
         assignment_id = str(uuid.uuid4())
         assignments.append({"id": assignment_id, "owner": name, "claimed_by": None})
 
+        if len(assignments) > 5:
+            assignments.pop(0)
+
         send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
         return "OK"
 
+    # =========================
+    # 🏆 PLEDGE LEADERBOARDS
+    # =========================
+    if "pleaderboard" in text:
+        data = get_leaderboard("pledge_counts")
+        msg = "📊 PledgeDuty Leaderboard:\n\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {row['name']} — {row['score']}\n"
+        send_message(msg)
+        return "OK"
+
+    if "!leaderboard" in text:
+        data = get_leaderboard("leaderboard")
+        msg = "🏆 Leaderboard:\n\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {PLEDGES.get(row['name'],'Unknown')} — {row['score']}\n"
+        send_message(msg)
+        return "OK"
+
     return "OK"
+
+# =========================
+# 🍞 CLAIM UI
+# =========================
+@app.route("/claim/<assignment_id>")
+def claim_page(assignment_id):
+    buttons = ""
+    for pid, pname in PLEDGES.items():
+        buttons += f"""
+        <form action="/submit/{assignment_id}/{pid}" method="post">
+            <button>{pname}</button>
+        </form>
+        """
+    return f"<html><body style='background:#0f172a;color:white;text-align:center;'><h1>Select your name</h1>{buttons}</body></html>"
+
+@app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
+def submit_claim(assignment_id, pid):
+    global assignments
+
+    for a in assignments:
+        if a["id"] == assignment_id:
+            if a["claimed_by"] is not None:
+                return "<h1>Already claimed ❌</h1>"
+
+            claimer = PLEDGES.get(pid, "Someone")
+            a["claimed_by"] = claimer
+
+            add_score("leaderboard", pid, 1)
+
+            send_message(f"🔥 {claimer} claimed {a['owner']}'s duty")
+            return "<h1>Success 👍</h1>"
+
+    return "<h1>Expired ❌</h1>"
