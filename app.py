@@ -294,21 +294,35 @@ def webhook():
         return "OK"
 
     # 🏆 LEADERBOARDS
-    if text == "!leaderboard":
-        data = supabase.table("pledge_leaderboard").select("*").order("score", desc=True).execute().data
-        msg = "🏆 Pledge Leaderboard:\n\n"
-        for i, row in enumerate(data, 1):
-            msg += f"{i}. {PLEDGES.get(row['name'], row['name'])} — {row['score']}\n"
-        send_message(msg)
+    # 🏆 LEADERBOARDS
+if text == "!leaderboard":
+    data = supabase.table("pledge_leaderboard").select("*").order("score", desc=True).execute().data
+
+    if not data:
+        send_message("No claims yet ❌")
         return "OK"
 
-    if text == "!pleaderboard":
-        data = supabase.table("duty_posts").select("*").order("count", desc=True).execute().data
-        msg = "📊 Duty Post Leaderboard:\n\n"
-        for i, row in enumerate(data, 1):
-            msg += f"{i}. {row['name']} — {row['count']}\n"
-        send_message(msg)
+    msg = "🏆 Pledge Leaderboard:\n\n"
+    for i, row in enumerate(data, 1):
+        msg += f"{i}. {PLEDGES.get(row['name'], row['name'])} — {row['score']}\n"
+
+    send_message(msg)
+    return "OK"
+
+if text == "!pleaderboard":
+    data = supabase.table("duty_posts").select("*").order("count", desc=True).execute().data
+
+    if not data:
+        send_message("No duties posted yet ❌")
         return "OK"
+
+    msg = "📊 Duty Post Leaderboard:\n\n"
+    for i, row in enumerate(data, 1):
+        msg += f"{i}. {row['name']} — {row['count']}\n"
+
+    send_message(msg)
+    return "OK"
+
 
     return "OK"
 
