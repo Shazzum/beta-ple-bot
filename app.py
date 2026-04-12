@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, render_template_string
 import requests
 import uuid
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -18,7 +18,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # =========================
-# 📛 PLEDGES (RESTORED)
+# 📛 PLEDGES
 # =========================
 PLEDGES = {
     "simms": "pledge simms",
@@ -126,7 +126,7 @@ def start_scheduler():
 start_scheduler()
 
 # =========================
-# 🔧 HELPER (RESTORED)
+# 🔧 HELPER
 # =========================
 def extract_parentheses(text):
     results = []
@@ -206,10 +206,10 @@ def webhook():
     return "OK"
 
 # =========================
-# ✅ CLAIM ROUTE
+# 🌐 CLAIM PAGE (BUTTON UI)
 # =========================
 @app.route("/claim/<assignment_id>", methods=["GET"])
-def claim(assignment_id):
+def claim_page(assignment_id):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
 
     if not res.data:
@@ -218,15 +218,55 @@ def claim(assignment_id):
     assignment = res.data[0]
 
     if assignment["claimed_by"]:
-        return "❌ This duty has already been claimed."
+        return f"❌ Already claimed by {assignment['claimed_by']}."
+
+    buttons_html = ""
+    for pledge in PLEDGES.keys():
+        buttons_html += f"""
+        <form method="POST" action="/claim/{assignment_id}">
+            <input type="hidden" name="name" value="{pledge}">
+            <button type="submit" style="margin:5px;padding:10px 20px;font-size:16px;">
+                {pledge.capitalize()}
+            </button>
+        </form>
+        """
+
+    return render_template_string(f"""
+        <h2>🍞 Claim Duty</h2>
+        <p>Select your name:</p>
+        {buttons_html}
+    """)
+
+# =========================
+# ✅ CLAIM SUBMIT
+# =========================
+@app.route("/claim/<assignment_id>", methods=["POST"])
+def claim_submit(assignment_id):
+    user = request.form.get("name")
+
+    if not user:
+        return "❌ No name selected."
+
+    res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
+
+    if not res.data:
+        return "❌ Duty not found."
+
+    assignment = res.data[0]
+
+    if assignment["claimed_by"]:
+        return f"❌ Already claimed by {assignment['claimed_by']}."
 
     supabase.table("assignments").update({
-        "claimed_by": "claimed"
+        "claimed_by": user
     }).eq("id", assignment_id).execute()
 
-    send_message("✅ Duty claimed!")
+    send_message(f"✅ {user.capitalize()} claimed the duty!")
 
-    return "You successfully claimed this duty! 🎉"
+    return f"""
+    <h2>✅ Claimed!</h2>
+    <p>{user.capitalize()} has claimed this duty.</p>
+    """
 
 # =========================
 # 🟢 HEALTH CHECK
