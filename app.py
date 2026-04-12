@@ -3,6 +3,7 @@ import requests
 import uuid
 from apscheduler.schedulers.background import BackgroundScheduler
 from supabase import create_client
+import os
 
 app = Flask(__name__)
 
@@ -11,8 +12,6 @@ BASE_URL = "https://beta-ple-bot.onrender.com"
 
 LAT = 34.1209
 LON = -93.0538
-
-import os
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -41,10 +40,10 @@ PLEDGES = {
     "nelson": "pledge nelson"
 }
 
-assignments = []  # kept (unused)
+assignments = []
 
 # =========================
-# 💰 ECONOMY (UNCHANGED)
+# 💰 ECONOMY
 # =========================
 def get_balance(name):
     res = supabase.table("balances").select("*").eq("name", name).execute()
@@ -66,25 +65,38 @@ def subtract_balance(name, amount):
     return True
 
 # =========================
-# 📊 LEADERBOARDS (UNCHANGED)
+# 🏆 LEADERBOARD HELPERS
 # =========================
-def add_score(table, name, amount):
-    existing = supabase.table(table).select("*").eq("name", name).execute()
-    if existing.data:
-        supabase.table(table).update(
-            {"score": existing.data[0]["score"] + amount}
-        ).eq("name", name).execute()
+def add_pledge_claim(pid):
+    res = supabase.table("pledge_leaderboard").select("*").eq("name", pid).execute()
+    if res.data:
+        supabase.table("pledge_leaderboard").update({
+            "score": res.data[0]["score"] + 1
+        }).eq("name", pid).execute()
     else:
-        supabase.table(table).insert({"name": name, "score": amount}).execute()
+        supabase.table("pledge_leaderboard").insert({
+            "name": pid,
+            "score": 1
+        }).execute()
 
-def get_leaderboard(table):
-    return supabase.table(table).select("*").order("score", desc=True).execute().data
+def add_duty_post(user):
+    res = supabase.table("duty_posts").select("*").eq("name", user).execute()
+    if res.data:
+        supabase.table("duty_posts").update({
+            "count": res.data[0]["count"] + 1
+        }).eq("name", user).execute()
+    else:
+        supabase.table("duty_posts").insert({
+            "name": user,
+            "count": 1
+        }).execute()
 
+# =========================
 def send_message(text):
     requests.post("https://api.groupme.com/v3/bots/post", json={"bot_id": BOT_ID, "text": text})
 
 # =========================
-# 🌤 WEATHER (UNCHANGED)
+# 🌤 WEATHER
 # =========================
 def get_weather():
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=America/Chicago"
@@ -93,7 +105,7 @@ def get_weather():
     return f"🌤 Arkadelphia Weather\nHigh: {round(daily['temperature_2m_max'][0])}°F\nLow: {round(daily['temperature_2m_min'][0])}°F"
 
 # =========================
-# ⏰ DAILY REWARDS (UNCHANGED)
+# ⏰ DAILY REWARDS
 # =========================
 def daily_rewards():
     users = supabase.table("balances").select("*").execute().data
@@ -106,13 +118,12 @@ scheduler.add_job(daily_rewards, "cron", hour=8, minute=0)
 scheduler.start()
 
 # =========================
-# 🔧 HELPER (UNCHANGED)
+# 🔧 HELPER
 # =========================
 def extract_parentheses(text):
     results = []
     current = ""
     inside = False
-
     for char in text:
         if char == "(":
             inside = True
@@ -122,7 +133,6 @@ def extract_parentheses(text):
             results.append(current.strip())
         elif inside:
             current += char
-
     return results
 
 # =========================
@@ -130,18 +140,14 @@ def extract_parentheses(text):
 # =========================
 @app.route("/", methods=["POST"])
 def webhook():
-    global assignments
-
     data = request.json
     text = (data.get("text") or "").lower()
     name = data.get("name")
 
-    # 💰 balance
     if text == "!balance":
         send_message(f"{name} has {get_balance(name)} points 💰")
         return "OK"
 
-    # 💰 richlist
     if text == "!richlist":
         data = supabase.table("balances").select("*").order("balance", desc=True).execute().data
         msg = "💰 Richlist:\n\n"
@@ -150,33 +156,26 @@ def webhook():
         send_message(msg)
         return "OK"
 
-    # 👑 blessall
     if text.startswith("!blessall"):
         if name != "Mega":
             send_message("Unauthorized ❌")
             return "OK"
-
         amount = int(text.split()[1])
         users = supabase.table("balances").select("*").execute().data
-
         for u in users:
             add_balance(u["name"], amount)
-
         send_message(f"🙏 Mega blessed everyone with +{amount}")
         return "OK"
 
-    # 🌤 weather
     if "!weather" in text:
         send_message(get_weather())
         return "OK"
 
-    # =========================
-    # 🎲 BET SYSTEM (UNCHANGED)
-    # =========================
+    # 🎲 CREATE BET (FIXED)
     if text.startswith("!bet"):
         parts = extract_parentheses(text)
-        if len(parts) < 3:
-            send_message("Format: !bet (bet name) (option1) (option2)")
+        if len(parts) < 2:
+            send_message("Format: !bet (question) (option1) (option2) (option3...)")
             return "OK"
 
         bet_name = parts[0]
@@ -192,13 +191,18 @@ def webhook():
 
         msg = f"🎲 NEW BET:\n\n{bet_name}\n\n"
         for o in options:
-            msg += f"- {o}\n"
+            msg += f"• {o}\n"
 
         send_message(msg)
         return "OK"
 
+    # 🎲 JOIN (FIXED)
     if text.startswith("!join"):
         parts = extract_parentheses(text)
+        if len(parts) < 2:
+            send_message("Format: !join (bet name) (option)")
+            return "OK"
+
         bet_name = parts[0]
         choice = parts[1]
 
@@ -208,10 +212,16 @@ def webhook():
             return "OK"
 
         bet = bet[0]
-        options = bet["options"].split(",")
+        options = [o.strip() for o in bet["options"].split(",")]
 
-        if choice not in options:
-            send_message("Invalid option ❌")
+        matched = None
+        for o in options:
+            if o.lower() == choice.lower():
+                matched = o
+                break
+
+        if not matched:
+            send_message(f"Invalid option ❌ Options: {', '.join(options)}")
             return "OK"
 
         if not subtract_balance(name, 100):
@@ -221,13 +231,14 @@ def webhook():
         supabase.table("bet_entries").insert({
             "bet_id": bet["id"],
             "user": name,
-            "option": choice,
+            "option": matched,
             "amount": 100
         }).execute()
 
-        send_message(f"{name} joined {bet_name} → {choice}")
+        send_message(f"{name} joined {bet_name} → {matched}")
         return "OK"
 
+    # 🎲 RESOLVE (UNCHANGED)
     if text.startswith("!resolve"):
         if name != "Mega":
             send_message("Unauthorized ❌")
@@ -267,15 +278,12 @@ def webhook():
         send_message(f"🏆 BET RESOLVED!\nWinner: {winning}")
         return "OK"
 
-    # =========================
-    # 🍞 PLEDGEDUTY (FIXED)
-    # =========================
+    # 🍞 DUTY
     if text.strip() == "pledgeduty":
-        add_score("pledge_counts", name, 1)
+        add_duty_post(name)
 
         assignment_id = str(uuid.uuid4())
 
-        # SAVE TO SUPABASE
         supabase.table("assignments").insert({
             "id": assignment_id,
             "owner": name,
@@ -285,84 +293,73 @@ def webhook():
         send_message(f"🍞 {name} posted a pledge duty\n{BASE_URL}/claim/{assignment_id}")
         return "OK"
 
+    # 🏆 LEADERBOARDS
+    if text == "!leaderboard":
+        data = supabase.table("pledge_leaderboard").select("*").order("score", desc=True).execute().data
+        msg = "🏆 Pledge Leaderboard:\n\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {PLEDGES.get(row['name'], row['name'])} — {row['score']}\n"
+        send_message(msg)
+        return "OK"
+
+    if text == "!pleaderboard":
+        data = supabase.table("duty_posts").select("*").order("count", desc=True).execute().data
+        msg = "📊 Duty Post Leaderboard:\n\n"
+        for i, row in enumerate(data, 1):
+            msg += f"{i}. {row['name']} — {row['count']}\n"
+        send_message(msg)
+        return "OK"
+
     return "OK"
 
-
 # =========================
-# 🌐 CLAIM PAGE (BUTTON UI)
+# CLAIM PAGE
 # =========================
 @app.route("/claim/<assignment_id>")
 def claim_page(assignment_id):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
-
     if not res.data:
-        return html_page("Expired ❌")
+        return "Expired ❌"
 
     assignment = res.data[0]
 
     if assignment["claimed_by"]:
-        return html_page(f"Already claimed by {assignment['claimed_by']} ❌")
+        return f"Already claimed by {assignment['claimed_by']} ❌"
 
     buttons = ""
     for pid, pname in PLEDGES.items():
         buttons += f"""
         <form action="/submit/{assignment_id}/{pid}" method="post">
-            <button style="margin:8px;padding:12px 20px;font-size:16px;">
-                {pname}
-            </button>
+            <button>{pname}</button>
         </form>
         """
 
-    return f"""
-    <html>
-    <body style="background:#0f172a;color:white;text-align:center;">
-        <h1>Select your name</h1>
-        {buttons}
-    </body>
-    </html>
-    """
-
+    return f"<h1>Select your name</h1>{buttons}"
 
 # =========================
-# ✅ CLAIM SUBMIT
+# CLAIM SUBMIT
 # =========================
 @app.route("/submit/<assignment_id>/<pid>", methods=["POST"])
 def submit_claim(assignment_id, pid):
     res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
-
-    if not res.data:
-        return html_page("Expired ❌")
-
     assignment = res.data[0]
 
     if assignment["claimed_by"]:
-        return html_page(f"Already claimed by {assignment['claimed_by']} ❌")
+        return "Already claimed ❌"
 
-    claimer = PLEDGES.get(pid, "Someone")
+    add_pledge_claim(pid)
 
     supabase.table("assignments").update({
-        "claimed_by": claimer
+        "claimed_by": PLEDGES.get(pid)
     }).eq("id", assignment_id).execute()
 
-    send_message(f"🔥 {claimer} claimed {assignment['owner']}'s duty")
+    send_message(f"🔥 {PLEDGES.get(pid)} claimed {assignment['owner']}'s duty")
 
-    return html_page(f"{claimer}, you got it 👍")
-
-
-def html_page(msg):
-    return f"""
-    <html>
-    <body style="background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;">
-        <h1>{msg}</h1>
-    </body>
-    </html>
-    """
-
+    return f"{PLEDGES.get(pid)} claimed it 👍"
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot is running ✅"
-
+    return "Bot running ✅"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
